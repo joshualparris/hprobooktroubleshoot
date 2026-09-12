@@ -1,10 +1,11 @@
 using System.Reflection;
+using System.Text.Json;
 
 namespace WindowsCrashDoctor.Services;
 
 public sealed class EngineExtractor
 {
-    private const string EngineVersion = "0.1.0";
+    public const string EngineVersion = "0.2.0";
 
     private static readonly IReadOnlyDictionary<string, string> Resources =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -12,17 +13,21 @@ public sealed class EngineExtractor
             ["WCD.Engine.scripts.collect-diagnostics.ps1"] = Path.Combine("scripts", "collect-diagnostics.ps1"),
             ["WCD.Engine.scripts.check-public-evidence.ps1"] = Path.Combine("scripts", "check-public-evidence.ps1"),
             ["WCD.Engine.windows-crash-doctor.CrashDoctor.psm1"] = Path.Combine("windows-crash-doctor", "CrashDoctor.psm1"),
+            ["WCD.Engine.windows-crash-doctor.TelemetryAnalysis.psm1"] = Path.Combine("windows-crash-doctor", "TelemetryAnalysis.psm1"),
             ["WCD.Engine.windows-crash-doctor.DumpParser.psm1"] = Path.Combine("windows-crash-doctor", "DumpParser.psm1"),
             ["WCD.Engine.windows-crash-doctor.Invoke-CrashDoctor.ps1"] = Path.Combine("windows-crash-doctor", "Invoke-CrashDoctor.ps1"),
             ["WCD.Engine.windows-crash-doctor.Integrations.psm1"] = Path.Combine("windows-crash-doctor", "Integrations.psm1"),
             ["WCD.Engine.windows-crash-doctor.Manage-Integrations.ps1"] = Path.Combine("windows-crash-doctor", "Manage-Integrations.ps1"),
+            ["WCD.Engine.windows-crash-doctor.version.json"] = Path.Combine("windows-crash-doctor", "version.json"),
             ["WCD.Engine.windows-crash-doctor.integrations.catalog.json"] = Path.Combine("windows-crash-doctor", "integrations", "catalog.json")
         };
 
     public string RootPath { get; }
     public string CollectorPath => Path.Combine(RootPath, "scripts", "collect-diagnostics.ps1");
     public string CrashDoctorPath => Path.Combine(RootPath, "windows-crash-doctor", "Invoke-CrashDoctor.ps1");
+    public string TelemetryPath => Path.Combine(RootPath, "windows-crash-doctor", "TelemetryAnalysis.psm1");
     public string IntegrationManagerPath => Path.Combine(RootPath, "windows-crash-doctor", "Manage-Integrations.ps1");
+    public string VersionPath => Path.Combine(RootPath, "windows-crash-doctor", "version.json");
 
     public EngineExtractor()
     {
@@ -46,5 +51,22 @@ public sealed class EngineExtractor
             using var output = File.Create(destination);
             stream.CopyTo(output);
         }
+
+        var informationalVersion = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion ?? assembly.GetName().Version?.ToString() ?? "unknown";
+        var commit = informationalVersion.Contains('+')
+            ? informationalVersion[(informationalVersion.IndexOf('+') + 1)..]
+            : "unknown";
+
+        var buildInfo = new
+        {
+            appVersion = informationalVersion,
+            engineVersion = EngineVersion,
+            commit,
+            extractedAtUtc = DateTimeOffset.UtcNow.ToString("O")
+        };
+        var buildInfoPath = Path.Combine(RootPath, "windows-crash-doctor", "build-info.json");
+        File.WriteAllText(buildInfoPath, JsonSerializer.Serialize(buildInfo, new JsonSerializerOptions { WriteIndented = true }));
     }
 }
