@@ -17,9 +17,10 @@ permissions:
 
 jobs:
   self-test:
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v4
+      # Pinned action SHAs make CI behaviour intentional rather than following a moving major tag.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Parse PowerShell sources
         shell: powershell
@@ -45,7 +46,7 @@ jobs:
           }
 
       - name: Upload parser diagnostics
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: crash-doctor-parser-diagnostics
           path: ci-parser-diagnostics.txt
@@ -60,20 +61,29 @@ jobs:
             exit 1
           }
 
-      - name: Verify open-source QA modules
+      - name: Install exact QA module versions
         shell: pwsh
         run: |
-          $pester = Get-Module -ListAvailable Pester | Where-Object Version -ge ([version]'5.5.0') | Sort-Object Version -Descending | Select-Object -First 1
-          $analyzer = Get-Module -ListAvailable PSScriptAnalyzer | Sort-Object Version -Descending | Select-Object -First 1
-          if (-not $pester) { throw 'Pester 5.5+ is required by this workflow.' }
-          if (-not $analyzer) { throw 'PSScriptAnalyzer is required by this workflow.' }
-          Write-Host "Pester $($pester.Version)"
-          Write-Host "PSScriptAnalyzer $($analyzer.Version)"
+          $catalog = (Get-Content '.\windows-crash-doctor\integrations\catalog.json' -Raw | ConvertFrom-Json).integrations
+          $pesterVersion = [string](($catalog | Where-Object id -eq 'pester').packageVersion)
+          $analyzerVersion = [string](($catalog | Where-Object id -eq 'psscriptanalyzer').packageVersion)
+          if (-not (Get-Module -ListAvailable Pester | Where-Object Version -eq ([version]$pesterVersion))) {
+            Install-Module Pester -RequiredVersion $pesterVersion -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer | Where-Object Version -eq ([version]$analyzerVersion))) {
+            Install-Module PSScriptAnalyzer -RequiredVersion $analyzerVersion -Scope CurrentUser -Force
+          }
+          Import-Module Pester -RequiredVersion $pesterVersion -Force
+          Import-Module PSScriptAnalyzer -RequiredVersion $analyzerVersion -Force
+          Write-Host "Pester $((Get-Module Pester).Version)"
+          Write-Host "PSScriptAnalyzer $((Get-Module PSScriptAnalyzer).Version)"
 
       - name: Run PSScriptAnalyzer errors gate
         shell: pwsh
         run: |
-          Import-Module PSScriptAnalyzer
+          $catalog = (Get-Content '.\windows-crash-doctor\integrations\catalog.json' -Raw | ConvertFrom-Json).integrations
+          $version = [string](($catalog | Where-Object id -eq 'psscriptanalyzer').packageVersion)
+          Import-Module PSScriptAnalyzer -RequiredVersion $version -Force
           $issues = @()
           $issues += Invoke-ScriptAnalyzer -Path '.\windows-crash-doctor' -Recurse -Severity Error
           $issues += Invoke-ScriptAnalyzer -Path '.\scripts' -Recurse -Severity Error
@@ -81,6 +91,10 @@ jobs:
             $issues | Format-Table -AutoSize | Out-String | Write-Host
             exit 1
           }
+
+      - name: Run code-principles invariant test
+        shell: powershell
+        run: .\windows-crash-doctor\tests\principles-self-test.ps1
 
       - name: Run Windows Crash Doctor self-test
         shell: powershell
@@ -105,7 +119,9 @@ jobs:
       - name: Run Pester integration tests
         shell: pwsh
         run: |
-          Import-Module Pester -MinimumVersion 5.5.0
+          $catalog = (Get-Content '.\windows-crash-doctor\integrations\catalog.json' -Raw | ConvertFrom-Json).integrations
+          $version = [string](($catalog | Where-Object id -eq 'pester').packageVersion)
+          Import-Module Pester -RequiredVersion $version -Force
           $config = New-PesterConfiguration
           $config.Run.Path = '.\windows-crash-doctor\tests\Integrations.Tests.ps1'
           $config.Run.PassThru = $true

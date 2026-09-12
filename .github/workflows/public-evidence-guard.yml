@@ -9,9 +9,9 @@ permissions:
 
 jobs:
   scan:
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Scan public text for recovery-key patterns
         shell: powershell
         run: .\scripts\check-public-evidence.ps1 -Root .
