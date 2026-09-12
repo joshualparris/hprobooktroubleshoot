@@ -8,6 +8,44 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Get-WcdProductInfo {
+    $versionPath = Join-Path $PSScriptRoot 'version.json'
+    $buildInfoPath = Join-Path $PSScriptRoot 'build-info.json'
+    $version = $null
+    $build = $null
+    if (Test-Path -LiteralPath $versionPath -PathType Leaf) {
+        try { $version = Get-Content -LiteralPath $versionPath -Raw | ConvertFrom-Json } catch { }
+    }
+    if (Test-Path -LiteralPath $buildInfoPath -PathType Leaf) {
+        try { $build = Get-Content -LiteralPath $buildInfoPath -Raw | ConvertFrom-Json } catch { }
+    }
+
+    $commit = $env:WCD_COMMIT_SHA
+    if ([string]::IsNullOrWhiteSpace($commit)) { $commit = $env:GITHUB_SHA }
+    if ([string]::IsNullOrWhiteSpace($commit) -and $build -and $build.PSObject.Properties.Name -contains 'commit') { $commit = [string]$build.commit }
+    if ([string]::IsNullOrWhiteSpace($commit)) { $commit = 'unknown' }
+
+    [pscustomobject][ordered]@{
+        ProductVersion = if ($version) { [string]$version.productVersion } else { 'unknown' }
+        EngineVersion = if ($version) { [string]$version.engineVersion } else { 'unknown' }
+        CollectorVersion = if ($version) { [string]$version.collectorVersion } else { 'unknown' }
+        RuleSetVersion = if ($version) { [string]$version.ruleSetVersion } else { 'unknown' }
+        SchemaVersion = if ($version) { [string]$version.schemaVersion } else { 'unknown' }
+        AppBuild = if ($build) { [string]$build.appVersion } else { $null }
+        Commit = $commit
+    }
+}
+
+function Add-WcdProductInfo {
+    param([Parameter(Mandatory = $true)]$Report)
+    $product = Get-WcdProductInfo
+    $Report | Add-Member -NotePropertyName Product -NotePropertyValue $product -Force
+    if ($Report.PSObject.Properties.Name -contains 'SchemaVersion' -and $product.SchemaVersion -ne 'unknown') {
+        $Report.SchemaVersion = $product.SchemaVersion
+    }
+    return $Report
+}
+
 function ConvertTo-CrashDoctorDumpMarkdown {
     param([Parameter(Mandatory = $true)]$Report)
 
@@ -15,6 +53,12 @@ function ConvertTo-CrashDoctorDumpMarkdown {
     $lines.Add('# Windows Crash Doctor dump report')
     $lines.Add('')
     $lines.Add("Dump: ``$($Report.Path)``")
+    if ($Report.Product) {
+        $lines.Add('')
+        $lines.Add("- **Windows Crash Doctor:** $($Report.Product.ProductVersion)")
+        $lines.Add("- **Engine / rules:** $($Report.Product.EngineVersion) / $($Report.Product.RuleSetVersion)")
+        $lines.Add("- **Commit:** ``$($Report.Product.Commit)``")
+    }
     $lines.Add('')
     $lines.Add("- **Format:** $($Report.Format)")
     $lines.Add("- **Architecture:** $($Report.Architecture)")
@@ -83,24 +127,19 @@ if ($PSCmdlet.ParameterSetName -eq 'Dump') {
     Import-Module $dumpModulePath -Force
 
     $resolvedDump = (Resolve-Path -LiteralPath $DumpPath).Path
-    if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-        $OutputDirectory = Split-Path -Parent $resolvedDump
-    }
-    if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
-        New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-    }
+    if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Split-Path -Parent $resolvedDump }
+    if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null }
 
     $report = Get-CrashDoctorDumpInfo -Path $resolvedDump
+    $report = Add-WcdProductInfo -Report $report
     $markdown = ConvertTo-CrashDoctorDumpMarkdown -Report $report
     $markdownPath = Join-Path $OutputDirectory 'crash-doctor-dump-report.md'
     $jsonPath = Join-Path $OutputDirectory 'crash-doctor-dump-report.json'
 
     $markdown | Out-File -LiteralPath $markdownPath -Encoding utf8 -Width 500
     $report | ConvertTo-Json -Depth 12 | Out-File -LiteralPath $jsonPath -Encoding utf8 -Width 500
-
     Write-Host "Crash Doctor dump report: $markdownPath"
     Write-Host "Machine-readable dump report: $jsonPath"
-
     if ($PassThru) { return $report }
     return
 }
@@ -108,44 +147,41 @@ if ($PSCmdlet.ParameterSetName -eq 'Dump') {
 $coreModulePath = Join-Path $PSScriptRoot 'CrashDoctor.psm1'
 $telemetryModulePath = Join-Path $PSScriptRoot 'TelemetryAnalysis.psm1'
 Import-Module $coreModulePath -Force
-if (Test-Path -LiteralPath $telemetryModulePath -PathType Leaf) {
-    Import-Module $telemetryModulePath -Force
-}
+if (Test-Path -LiteralPath $telemetryModulePath -PathType Leaf) { Import-Module $telemetryModulePath -Force }
 
-if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = $EvidencePath
-}
-
-if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
-    New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-}
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = $EvidencePath }
+if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null }
 
 $report = Invoke-CrashDoctorAnalysis -EvidencePath $EvidencePath
+$report = Add-WcdProductInfo -Report $report
 $telemetry = $null
 if (Get-Command Invoke-CrashDoctorTelemetryAnalysis -ErrorAction SilentlyContinue) {
     $telemetry = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $EvidencePath
-    if ($telemetry.Available) {
-        $report = Add-CrashDoctorTelemetryToReport -Report $report -Telemetry $telemetry
-    }
+    if ($telemetry.Available) { $report = Add-CrashDoctorTelemetryToReport -Report $report -Telemetry $telemetry }
 }
 
 $markdown = ConvertTo-CrashDoctorMarkdown -Report $report
+$product = $report.Product
+$productHeader = @(
+    '## Build provenance',
+    '',
+    "- Windows Crash Doctor: **$($product.ProductVersion)**",
+    "- Engine: **$($product.EngineVersion)**",
+    "- Collector: **$($product.CollectorVersion)**",
+    "- Rule set: **$($product.RuleSetVersion)**",
+    "- Schema: **$($product.SchemaVersion)**",
+    "- Commit: ``$($product.Commit)``"
+) -join [Environment]::NewLine
+$markdown += [Environment]::NewLine + [Environment]::NewLine + $productHeader
 if ($null -ne $telemetry -and $telemetry.Available) {
     $telemetryMarkdown = ConvertTo-CrashDoctorTelemetryMarkdownSection -Telemetry $telemetry
-    if (-not [string]::IsNullOrWhiteSpace($telemetryMarkdown)) {
-        $markdown += [Environment]::NewLine + [Environment]::NewLine + $telemetryMarkdown
-    }
+    if (-not [string]::IsNullOrWhiteSpace($telemetryMarkdown)) { $markdown += [Environment]::NewLine + [Environment]::NewLine + $telemetryMarkdown }
 }
 
 $markdownPath = Join-Path $OutputDirectory 'crash-doctor-report.md'
 $jsonPath = Join-Path $OutputDirectory 'crash-doctor-report.json'
-
 $markdown | Out-File -LiteralPath $markdownPath -Encoding utf8 -Width 500
 $report | ConvertTo-Json -Depth 12 | Out-File -LiteralPath $jsonPath -Encoding utf8 -Width 500
-
 Write-Host "Crash Doctor report: $markdownPath"
 Write-Host "Machine-readable report: $jsonPath"
-
-if ($PassThru) {
-    return $report
-}
+if ($PassThru) { return $report }
