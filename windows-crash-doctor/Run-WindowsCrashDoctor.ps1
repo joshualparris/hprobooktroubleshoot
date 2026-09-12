@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$OutputRoot = (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Windows Crash Doctor Results'),
+
+    [ValidateRange(1, 168)]
     [int]$EventHours = 12
 )
 
@@ -13,21 +15,87 @@ function Test-WcdAdministrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-if (-not (Test-WcdAdministrator)) {
-    if ([string]::IsNullOrWhiteSpace($PSCommandPath)) {
-        throw 'Windows Crash Doctor needs Administrator rights for the full diagnostic collection.'
+function Assert-WcdCommandLineSafePath {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+    if ($Path.Contains('"')) {
+        throw "Path cannot contain a double-quote character: $Path"
+    }
+}
+
+function Write-WcdStep {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Message,
+        [Parameter(Mandatory = $true)] [string]$SessionLog
+    )
+
+    $line = '[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $Message
+    Write-Host $line -ForegroundColor Cyan
+    Add-Content -LiteralPath $SessionLog -Value $line -Encoding UTF8 -ErrorAction Stop
+}
+
+function Invoke-WcdLogged {
+    param(
+        [Parameter(Mandatory = $true)] [scriptblock]$Action,
+        [Parameter(Mandatory = $true)] [string]$SessionLog
+    )
+
+    & $Action 2>&1 | ForEach-Object {
+        $text = ($_ | Out-String).TrimEnd()
+        if (-not [string]::IsNullOrWhiteSpace($text)) {
+            Write-Host $text
+            Add-Content -LiteralPath $SessionLog -Value $text -Encoding UTF8 -ErrorAction Stop
+        }
+    }
+}
+
+function Invoke-WcdCollector {
+    param(
+        [Parameter(Mandatory = $true)] [string]$CollectorPath,
+        [Parameter(Mandatory = $true)] [string]$OutputRoot,
+        [Parameter(Mandatory = $true)] [int]$EventHours,
+        [Parameter(Mandatory = $true)] [string]$ResultPathFile,
+        [Parameter(Mandatory = $true)] [string]$SessionLog
+    )
+
+    if (Test-WcdAdministrator) {
+        Invoke-WcdLogged -SessionLog $SessionLog -Action {
+            & $CollectorPath -OutputRoot $OutputRoot -EventHours $EventHours -ResultPathFile $ResultPathFile
+        }
+        return
     }
 
-    $argumentList = @(
+    foreach ($path in @($CollectorPath, $OutputRoot, $ResultPathFile)) {
+        Assert-WcdCommandLineSafePath -Path $path
+    }
+
+    # Only the collector needs Administrator rights; analysis, tests and reporting remain least-privileged.
+    $arguments = @(
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
-        '-File', ('"{0}"' -f $PSCommandPath),
+        '-File', ('"{0}"' -f $CollectorPath),
         '-OutputRoot', ('"{0}"' -f $OutputRoot),
-        '-EventHours', [string]$EventHours
+        '-EventHours', [string]$EventHours,
+        '-ResultPathFile', ('"{0}"' -f $ResultPathFile)
     ) -join ' '
 
-    $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argumentList -PassThru -Wait
-    exit $process.ExitCode
+    $process = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $arguments -PassThru -Wait -ErrorAction Stop
+    if ($process.ExitCode -ne 0) {
+        throw "Elevated diagnostic collector exited with code $($process.ExitCode)."
+    }
+}
+
+function Read-WcdCollectorResultPath {
+    param([Parameter(Mandatory = $true)] [string]$ResultPathFile)
+
+    if (-not (Test-Path -LiteralPath $ResultPathFile -PathType Leaf)) {
+        throw 'Diagnostic collection completed without returning its snapshot path.'
+    }
+
+    $path = (Get-Content -LiteralPath $ResultPathFile -Raw -ErrorAction Stop).Trim()
+    if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path -PathType Container)) {
+        throw 'Diagnostic collector returned an invalid snapshot path.'
+    }
+    return (Resolve-Path -LiteralPath $path).Path
 }
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
@@ -43,78 +111,60 @@ foreach ($required in @($collector, $crashDoctor, $selfTest, $integrationSelfTes
     }
 }
 
-New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $OutputRoot -Force -ErrorAction Stop | Out-Null
+$resolvedOutputRoot = (Resolve-Path -LiteralPath $OutputRoot).Path
+$runId = [guid]::NewGuid().ToString('N')
 $runStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$sessionLog = Join-Path $OutputRoot "CrashDoctor-Run-$runStamp.txt"
+$sessionLog = Join-Path $resolvedOutputRoot ('CrashDoctor-Run-{0}-{1}.txt' -f $runStamp, $runId.Substring(0, 8))
+$resultPathFile = Join-Path ([IO.Path]::GetTempPath()) ('WcdCollectorResult-{0}.txt' -f $runId)
 
-function Write-WcdStep {
-    param([string]$Message)
-    $line = '[{0}] {1}' -f (Get-Date -Format 'HH:mm:ss'), $Message
-    Write-Host $line -ForegroundColor Cyan
-    Add-Content -LiteralPath $sessionLog -Value $line -Encoding UTF8
-}
+try {
+    Write-WcdStep -SessionLog $sessionLog -Message 'Windows Crash Doctor one-click test starting.'
+    Write-WcdStep -SessionLog $sessionLog -Message 'Running built-in regression self-test without elevation.'
+    Invoke-WcdLogged -SessionLog $sessionLog -Action { & $selfTest -RepositoryMode }
 
-function Invoke-WcdLogged {
-    param(
-        [Parameter(Mandatory = $true)] [scriptblock]$Action
-    )
+    Write-WcdStep -SessionLog $sessionLog -Message 'Running integration policy self-test without elevation.'
+    Invoke-WcdLogged -SessionLog $sessionLog -Action { & $integrationSelfTest }
 
-    & $Action 2>&1 | ForEach-Object {
-        $text = $_ | Out-String
-        $text = $text.TrimEnd()
-        if (-not [string]::IsNullOrWhiteSpace($text)) {
-            Write-Host $text
-            Add-Content -LiteralPath $sessionLog -Value $text -Encoding UTF8
+    Write-WcdStep -SessionLog $sessionLog -Message 'Collecting a fresh read-only diagnostic snapshot; only this step requests elevation when needed.'
+    Invoke-WcdCollector -CollectorPath $collector -OutputRoot $resolvedOutputRoot -EventHours $EventHours -ResultPathFile $resultPathFile -SessionLog $sessionLog
+    $snapshot = Read-WcdCollectorResultPath -ResultPathFile $resultPathFile
+
+    $collectionStatusPath = Join-Path $snapshot 'collection-status.json'
+    if (Test-Path -LiteralPath $collectionStatusPath -PathType Leaf) {
+        $statusFile = Get-Item -LiteralPath $collectionStatusPath -ErrorAction Stop
+        if ($statusFile.Length -gt 1048576) { throw 'collection-status.json exceeds the 1 MiB safety limit.' }
+        $collectionStatus = Get-Content -LiteralPath $collectionStatusPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ($collectionStatus.CompletedWithErrors) {
+            Write-WcdStep -SessionLog $sessionLog -Message ("Collection is partial: {0} stage(s) failed; analysis will mark missing evidence as unknown." -f $collectionStatus.FailureCount)
         }
     }
+
+    Write-WcdStep -SessionLog $sessionLog -Message ("Analysing snapshot: {0}" -f $snapshot)
+    Invoke-WcdLogged -SessionLog $sessionLog -Action { & $crashDoctor -EvidencePath $snapshot -OutputDirectory $snapshot }
+
+    Write-WcdStep -SessionLog $sessionLog -Message 'Recording optional integration/provider status.'
+    $providerStatus = Join-Path $snapshot 'integration-status.txt'
+    & $integrationManager -Action status 2>&1 | Out-File -LiteralPath $providerStatus -Encoding UTF8 -Width 240 -ErrorAction Stop
+
+    $report = Join-Path $snapshot 'crash-doctor-report.md'
+    $jsonReport = Join-Path $snapshot 'crash-doctor-report.json'
+    if (-not (Test-Path -LiteralPath $report -PathType Leaf) -or -not (Test-Path -LiteralPath $jsonReport -PathType Leaf)) {
+        throw 'Crash Doctor did not produce both Markdown and JSON reports.'
+    }
+
+    Write-WcdStep -SessionLog $sessionLog -Message 'PASS: installation tests, collection and real-machine analysis all completed.'
+    Write-WcdStep -SessionLog $sessionLog -Message ("Report: {0}" -f $report)
+
+    try { Start-Process -FilePath 'explorer.exe' -ArgumentList ('"{0}"' -f $snapshot) -ErrorAction Stop | Out-Null }
+    catch { Write-Warning "Could not open results folder: $($_.Exception.Message)" }
+    try { Start-Process -FilePath 'notepad.exe' -ArgumentList ('"{0}"' -f $report) -ErrorAction Stop | Out-Null }
+    catch { Write-Warning "Could not open report: $($_.Exception.Message)" }
+
+    Write-Host ''
+    Write-Host 'Windows Crash Doctor: PASS' -ForegroundColor Green
+    Write-Host "Your report is here: $report" -ForegroundColor Green
 }
-
-Write-WcdStep 'Windows Crash Doctor one-click test starting.'
-Write-WcdStep 'Running built-in regression self-test.'
-Invoke-WcdLogged { & $selfTest -RepositoryMode }
-
-Write-WcdStep 'Running integration policy self-test.'
-Invoke-WcdLogged { & $integrationSelfTest }
-
-Write-WcdStep 'Collecting a fresh read-only diagnostic snapshot.'
-$before = @(
-    Get-ChildItem -LiteralPath $OutputRoot -Directory -Filter 'HPProBook-*' -ErrorAction SilentlyContinue |
-        Select-Object -ExpandProperty FullName
-)
-Invoke-WcdLogged { & $collector -OutputRoot $OutputRoot -EventHours $EventHours }
-
-$after = @(
-    Get-ChildItem -LiteralPath $OutputRoot -Directory -Filter 'HPProBook-*' -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending
-)
-$newSnapshot = $after | Where-Object { $_.FullName -notin $before } | Select-Object -First 1
-if (-not $newSnapshot) {
-    $newSnapshot = $after | Select-Object -First 1
+finally {
+    Remove-Item -LiteralPath $resultPathFile -Force -ErrorAction SilentlyContinue
 }
-if (-not $newSnapshot) {
-    throw 'Diagnostic collection completed without creating an HPProBook snapshot folder.'
-}
-
-Write-WcdStep ("Analysing snapshot: {0}" -f $newSnapshot.FullName)
-Invoke-WcdLogged { & $crashDoctor -EvidencePath $newSnapshot.FullName -OutputDirectory $newSnapshot.FullName }
-
-Write-WcdStep 'Recording optional integration/provider status.'
-$providerStatus = Join-Path $newSnapshot.FullName 'integration-status.txt'
-& $integrationManager -Action status 2>&1 | Out-File -LiteralPath $providerStatus -Encoding UTF8 -Width 240
-
-$report = Join-Path $newSnapshot.FullName 'crash-doctor-report.md'
-$jsonReport = Join-Path $newSnapshot.FullName 'crash-doctor-report.json'
-if (-not (Test-Path -LiteralPath $report -PathType Leaf) -or -not (Test-Path -LiteralPath $jsonReport -PathType Leaf)) {
-    throw 'Crash Doctor did not produce both Markdown and JSON reports.'
-}
-
-Write-WcdStep 'PASS: installation, regression tests, collection and real-machine analysis all completed.'
-Write-WcdStep ("Report: {0}" -f $report)
-
-Start-Process -FilePath 'explorer.exe' -ArgumentList ('"{0}"' -f $newSnapshot.FullName) | Out-Null
-Start-Process -FilePath 'notepad.exe' -ArgumentList ('"{0}"' -f $report) | Out-Null
-
-Write-Host ''
-Write-Host 'Windows Crash Doctor: PASS' -ForegroundColor Green
-Write-Host "Your report is here: $report" -ForegroundColor Green
-Write-Host 'The results folder and report have been opened for you.'
