@@ -11,11 +11,19 @@ public static class DesktopSelfTest
     {
         var temp = Path.Combine(Path.GetTempPath(), "WindowsCrashDoctorDesktopSelfTest-" + Guid.NewGuid().ToString("N"));
         var errorPath = Path.Combine(Path.GetTempPath(), "WindowsCrashDoctor-selftest-error.txt");
+        var progressPath = Path.Combine(Path.GetTempPath(), "WindowsCrashDoctor-selftest-progress.txt");
         Directory.CreateDirectory(temp);
+
+        void Stage(string name)
+        {
+            try { File.WriteAllText(progressPath, $"{DateTimeOffset.UtcNow:o} {name}"); } catch { }
+        }
 
         try
         {
             if (File.Exists(errorPath)) File.Delete(errorPath);
+            if (File.Exists(progressPath)) File.Delete(progressPath);
+            Stage("engine-extract");
             var engine = new EngineExtractor();
             engine.EnsureExtracted();
 
@@ -26,6 +34,7 @@ public static class DesktopSelfTest
             })
                 if (!File.Exists(required)) throw new InvalidOperationException($"Embedded engine self-test missing required file: {required}");
 
+            Stage("registry");
             var registry = DiagnosticRegistry.Load(engine.RegistryPath);
             if (registry.Diagnostics.Count < 20 || registry.Diagnostics.Select(x => x.Id).Distinct(StringComparer.OrdinalIgnoreCase).Count() != registry.Diagnostics.Count)
                 throw new InvalidOperationException("Packaged diagnostic registry is incomplete or contains duplicate IDs.");
@@ -36,6 +45,7 @@ public static class DesktopSelfTest
                 "12.9.2026,15:16:16.000,92,100,52,60\r\n" +
                 "12.9.2026,15:16:18.000,90,35,46,18\r\n");
 
+            Stage("engine-analysis");
             var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
             if (!File.Exists(powershell)) powershell = "powershell.exe";
             var psi = new ProcessStartInfo(powershell)
@@ -48,11 +58,18 @@ public static class DesktopSelfTest
             psi.ArgumentList.Add("-OutputDirectory"); psi.ArgumentList.Add(temp);
 
             using var process = Process.Start(psi) ?? throw new InvalidOperationException("Could not start Windows PowerShell for packaged-engine self-test.");
-            if (!process.WaitForExit(60_000)) { process.Kill(true); throw new TimeoutException("Packaged-engine self-test timed out."); }
-            var stdout = process.StandardOutput.ReadToEnd();
-            var stderr = process.StandardError.ReadToEnd();
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(60_000))
+            {
+                try { process.Kill(true); } catch { }
+                throw new TimeoutException("Packaged-engine self-test timed out.");
+            }
+            var stdout = stdoutTask.GetAwaiter().GetResult();
+            var stderr = stderrTask.GetAwaiter().GetResult();
             if (process.ExitCode != 0) throw new InvalidOperationException($"Packaged engine returned {process.ExitCode}. {stdout} {stderr}");
 
+            Stage("report-validation");
             var reportPath = Path.Combine(temp, "crash-doctor-report.json");
             if (!File.Exists(reportPath)) throw new InvalidOperationException("Packaged engine did not create crash-doctor-report.json.");
             using (var report = JsonDocument.Parse(File.ReadAllText(reportPath)))
@@ -70,13 +87,18 @@ public static class DesktopSelfTest
                     throw new InvalidOperationException("Report coverage is not sourced from the canonical diagnostic registry.");
             }
 
+            Stage("runner-timeout");
             RunRunnerSelfTest();
+            Stage("comparison");
             RunComparisonSelfTest();
+            Stage("privacy-export");
             RunPrivacyExportSelfTest(temp);
+            Stage("complete");
             return 0;
         }
         catch (Exception ex)
         {
+            Stage("failed");
             try { File.WriteAllText(errorPath, ex.ToString()); } catch { }
             return 1;
         }
