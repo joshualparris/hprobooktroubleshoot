@@ -49,8 +49,8 @@ function Get-WcdRegistryCoverage {
         $file = [string]$diagnostic.evidenceFile
         $path = Join-Path $resolved $file
         $hasEvidence = (Test-Path -LiteralPath $path -PathType Leaf) -and ((Get-Item -LiteralPath $path).Length -gt 0)
-        if ($hasEvidence) { $present.Add($file) } else { $missing.Add($file) }
-        $states.Add([pscustomobject][ordered]@{
+        if ($hasEvidence) { [void]$present.Add($file) } else { [void]$missing.Add($file) }
+        [void]$states.Add([pscustomobject][ordered]@{
             Id = [string]$diagnostic.id
             Name = [string]$diagnostic.name
             Category = [string]$diagnostic.category
@@ -64,12 +64,12 @@ function Get-WcdRegistryCoverage {
     $expected = @($Registry.diagnostics).Count
     $percent = if ($expected -eq 0) { 0.0 } else { [math]::Round(100.0 * $present.Count / $expected, 1) }
     [pscustomobject][ordered]@{
-        PresentFiles = @($present)
-        MissingFiles = @($missing)
+        PresentFiles = [string[]]$present.ToArray()
+        MissingFiles = [string[]]$missing.ToArray()
         PresentCount = $present.Count
         ExpectedCount = $expected
         Percent = $percent
-        Diagnostics = @($states)
+        Diagnostics = [object[]]$states.ToArray()
     }
 }
 
