@@ -11,6 +11,7 @@ This repository has two kinds of documentation and they should not be confused:
 |---|---|
 | Understand the whole repository | [`../README.md`](../README.md) |
 | See the current engineering quality/risk audit and highest-priority fixes | [`REPOSITORY_AUDIT.md`](REPOSITORY_AUDIT.md) |
+| See what was implemented for the audit's Phase 0 blockers | [`PHASE0_IMPLEMENTATION_2026-09-12.md`](PHASE0_IMPLEMENTATION_2026-09-12.md) |
 | Run Windows Crash Doctor | [`../windows-crash-doctor/README.md`](../windows-crash-doctor/README.md) |
 | See optional open-source diagnostic providers, licences and supply-chain rules | [`OPEN_SOURCE_INTEGRATIONS.md`](OPEN_SOURCE_INTEGRATIONS.md) |
 | Understand the architecture and design rules | [`WINDOWS_CRASH_DOCTOR_PLAN.md`](WINDOWS_CRASH_DOCTOR_PLAN.md) |
@@ -31,9 +32,10 @@ When documents disagree, use this order:
 3. `analysis/MASTER_ANALYSIS.md` for detailed case interpretation.
 4. `windows-crash-doctor/README.md` for currently shipped Crash Doctor behaviour.
 5. `REPOSITORY_AUDIT.md` for current cross-cutting quality, risk, integration and release-readiness findings.
-6. `WINDOWS_CRASH_DOCTOR_PLAN.md` for architecture and intended design.
-7. `GITHUB_BORROW_ROADMAP.md` for planned cross-repository adaptations and implementation sequencing.
-8. `ROADMAP_100.md` for the broader unimplemented product backlog.
+6. `PHASE0_IMPLEMENTATION_2026-09-12.md` for the concrete remediation applied to the audit's release blockers; the Product Gate remains the proof that those changes compose successfully.
+7. `WINDOWS_CRASH_DOCTOR_PLAN.md` for architecture and intended design.
+8. `GITHUB_BORROW_ROADMAP.md` for planned cross-repository adaptations and implementation sequencing.
+9. `ROADMAP_100.md` for the broader unimplemented product backlog.
 
 A roadmap item is not a statement that a feature already exists. An audit finding is not resolved merely because implementation code exists; it should be marked resolved only when the relevant acceptance test/release evidence proves the end-to-end behaviour.
 

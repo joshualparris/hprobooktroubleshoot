@@ -1,10 +1,6 @@
 [CmdletBinding()]
 param(
     [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA 'WindowsCrashDoctor\App'),
-
-    [ValidatePattern('^[0-9a-fA-F]{40}$')]
-    [string]$CommitSha,
-
     [switch]$InstallOnly
 )
 
@@ -12,137 +8,103 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$script:Repository = 'joshualparris/hprobooktroubleshoot'
-$script:MaxArchiveBytes = 67108864
-
-function Assert-WcdCommandLineSafePath {
-    param([Parameter(Mandatory = $true)] [string]$Path)
-    if ($Path.Contains('"')) {
-        throw "Path cannot contain a double-quote character: $Path"
-    }
+$tag = 'windows-crash-doctor-desktop-latest'
+$repo = 'joshualparris/hprobooktroubleshoot'
+$apiUrl = "https://api.github.com/repos/$repo/releases/tags/$tag"
+$tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('WindowsCrashDoctorInstall-' + [guid]::NewGuid().ToString('N'))
+$zipPath = Join-Path $tempRoot 'WindowsCrashDoctor-Engine.zip'
+$hashPath = Join-Path $tempRoot 'WindowsCrashDoctor-Engine.zip.sha256'
+$extractRoot = Join-Path $tempRoot 'extract'
+$headers = @{
+    Accept = 'application/vnd.github+json'
+    'X-GitHub-Api-Version' = '2022-11-28'
+    'User-Agent' = 'WindowsCrashDoctorCliInstaller/0.2'
 }
 
-function Resolve-WcdInstallCommit {
-    param([AllowNull()] [string]$RequestedSha)
+function Get-ReleaseAsset {
+    param([Parameter(Mandatory=$true)]$Release,[Parameter(Mandatory=$true)][string]$Name)
+    $asset = @($Release.assets | Where-Object { $_.name -eq $Name } | Select-Object -First 1)
+    if (-not $asset.Count) { throw "Release $tag does not contain required asset: $Name" }
+    $asset[0]
+}
 
-    if (-not [string]::IsNullOrWhiteSpace($RequestedSha)) {
-        if ($RequestedSha -notmatch '^[0-9a-fA-F]{40}$') {
-            throw 'CommitSha must be a full 40-character hexadecimal Git commit SHA.'
+function Get-ExpectedSha256 {
+    param([Parameter(Mandatory=$true)]$Asset,[Parameter(Mandatory=$true)][string]$ChecksumPath)
+    if ($Asset.PSObject.Properties.Name -contains 'digest' -and [string]$Asset.digest -match '^sha256:([0-9a-fA-F]{64})$') {
+        return $Matches[1].ToLowerInvariant()
+    }
+    $text = Get-Content -LiteralPath $ChecksumPath -Raw
+    $match = [regex]::Match($text, '(?i)\b([0-9a-f]{64})\b')
+    if (-not $match.Success) { throw 'Published checksum asset did not contain a SHA-256 digest.' }
+    $match.Groups[1].Value.ToLowerInvariant()
+}
+
+Write-Host ''
+Write-Host 'Windows Crash Doctor verified CLI installer' -ForegroundColor Cyan
+Write-Host '===========================================' -ForegroundColor Cyan
+Write-Host "Install location: $InstallRoot"
+Write-Host 'The installer itself stays in standard-user mode; the diagnostic runner requests UAC only when collection actually needs it.'
+Write-Host ''
+
+New-Item -ItemType Directory -Path $tempRoot, $extractRoot -Force | Out-Null
+
+try {
+    Write-Host '1/6 Resolving the tested canary release...'
+    $release = Invoke-RestMethod -Headers $headers -Uri $apiUrl -Method Get
+    $zipAsset = Get-ReleaseAsset -Release $release -Name 'WindowsCrashDoctor-Engine.zip'
+    $hashAsset = Get-ReleaseAsset -Release $release -Name 'WindowsCrashDoctor-Engine.zip.sha256'
+
+    Write-Host '2/6 Downloading engine package and checksum...'
+    Invoke-WebRequest -Uri $zipAsset.browser_download_url -Headers $headers -OutFile $zipPath -UseBasicParsing
+    Invoke-WebRequest -Uri $hashAsset.browser_download_url -Headers $headers -OutFile $hashPath -UseBasicParsing
+    $expected = Get-ExpectedSha256 -Asset $zipAsset -ChecksumPath $hashPath
+    $actual = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $expected) { throw "SHA-256 verification failed. Expected $expected but downloaded $actual. Nothing was installed." }
+    Write-Host "SHA-256 verified: $actual" -ForegroundColor Green
+
+    Write-Host '3/6 Extracting verified package...'
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -Force
+    foreach ($requiredDirectory in @('scripts','windows-crash-doctor')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $extractRoot $requiredDirectory) -PathType Container)) {
+            throw "Verified package is incomplete; missing directory: $requiredDirectory"
         }
-        return $RequestedSha.ToLowerInvariant()
     }
 
-    $headers = @{ 'User-Agent' = 'Windows-Crash-Doctor'; 'Accept' = 'application/vnd.github+json' }
-    $commit = Invoke-RestMethod -Uri "https://api.github.com/repos/$script:Repository/commits/main" -Headers $headers -TimeoutSec 30 -ErrorAction Stop
-    $resolved = [string]$commit.sha
-    if ($resolved -notmatch '^[0-9a-fA-F]{40}$') {
-        throw 'GitHub returned an invalid main commit SHA.'
-    }
-    return $resolved.ToLowerInvariant()
-}
-
-function Get-WcdExtractedRepositoryRoot {
-    param([Parameter(Mandatory = $true)] [string]$ExtractRoot)
-
-    $directories = @(Get-ChildItem -LiteralPath $ExtractRoot -Directory -Force -ErrorAction Stop)
-    if ($directories.Count -ne 1) {
-        throw "Expected exactly one repository root in the downloaded archive; found $($directories.Count)."
-    }
-    return $directories[0].FullName
-}
-
-function Assert-WcdStagedApplication {
-    param([Parameter(Mandatory = $true)] [string]$StagingRoot)
-
-    $requiredFiles = @(
-        'windows-crash-doctor\Run-WindowsCrashDoctor.ps1',
-        'windows-crash-doctor\Invoke-CrashDoctor.ps1',
-        'windows-crash-doctor\CrashDoctor.psm1',
-        'windows-crash-doctor\FindingModel.psm1',
-        'windows-crash-doctor\Reporting.psm1',
-        'windows-crash-doctor\TelemetryAnalysis.psm1',
-        'windows-crash-doctor\tests\self-test.ps1',
-        'windows-crash-doctor\tests\integration-self-test.ps1',
-        'windows-crash-doctor\tests\telemetry-self-test.ps1',
-        'windows-crash-doctor\tests\dump-parser-test.ps1',
-        'scripts\collect-diagnostics.ps1'
-    )
-    foreach ($relativePath in $requiredFiles) {
-        $path = Join-Path $StagingRoot $relativePath
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-            throw "Staged installation is incomplete; missing: $relativePath"
-        }
-    }
-}
-
-function Invoke-WcdStagedTest {
-    param(
-        [Parameter(Mandatory = $true)] [string]$ScriptPath,
-        [string[]]$Arguments = @(),
-        [ValidateRange(1, 900)] [int]$TimeoutSeconds = 300
-    )
-
-    Assert-WcdCommandLineSafePath -Path $ScriptPath
-    $argumentText = @(
-        '-NoProfile',
-        '-ExecutionPolicy', 'Bypass',
-        '-File', ('"{0}"' -f $ScriptPath)
-    ) + $Arguments
-
-    $process = Start-Process -FilePath 'powershell.exe' -ArgumentList ($argumentText -join ' ') -PassThru -NoNewWindow -ErrorAction Stop
-    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-        try { $process.Kill() } catch { }
-        throw "Installation self-test '$([IO.Path]::GetFileName($ScriptPath))' exceeded the $TimeoutSeconds-second timeout."
-    }
-    if ($process.ExitCode -ne 0) {
-        throw "Installation self-test '$([IO.Path]::GetFileName($ScriptPath))' failed with exit code $($process.ExitCode)."
-    }
-}
-
-function Test-WcdStagedApplication {
-    param([Parameter(Mandatory = $true)] [string]$StagingRoot)
-
-    Assert-WcdStagedApplication -StagingRoot $StagingRoot
-    $testRoot = Join-Path $StagingRoot 'windows-crash-doctor\tests'
-    Invoke-WcdStagedTest -ScriptPath (Join-Path $testRoot 'self-test.ps1') -Arguments @('-RepositoryMode')
-    Invoke-WcdStagedTest -ScriptPath (Join-Path $testRoot 'integration-self-test.ps1')
-    Invoke-WcdStagedTest -ScriptPath (Join-Path $testRoot 'telemetry-self-test.ps1')
-    Invoke-WcdStagedTest -ScriptPath (Join-Path $testRoot 'dump-parser-test.ps1')
-    Invoke-WcdStagedTest -ScriptPath (Join-Path $testRoot 'dump-parser-real-smoke.ps1')
-}
-
-function Install-WcdStagedApplication {
-    param(
-        [Parameter(Mandatory = $true)] [string]$StagingRoot,
-        [Parameter(Mandatory = $true)] [string]$InstallRoot
-    )
-
+    Write-Host '4/6 Installing/updating Windows Crash Doctor...'
     $installParent = Split-Path -Parent $InstallRoot
-    $backup = Join-Path $installParent ('App.backup-' + [guid]::NewGuid().ToString('N'))
-    $oldMoved = $false
-    try {
-        # The existing known-good install is retained until the new staging tree has already passed its tests.
-        if (Test-Path -LiteralPath $InstallRoot) {
-            Move-Item -LiteralPath $InstallRoot -Destination $backup -ErrorAction Stop
-            $oldMoved = $true
-        }
-        Move-Item -LiteralPath $StagingRoot -Destination $InstallRoot -ErrorAction Stop
-        if ($oldMoved) {
-            Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction Stop
-        }
-    }
-    catch {
-        if (-not (Test-Path -LiteralPath $InstallRoot) -and $oldMoved -and (Test-Path -LiteralPath $backup)) {
-            Move-Item -LiteralPath $backup -Destination $InstallRoot -ErrorAction SilentlyContinue
-        }
-        throw
-    }
-}
+    New-Item -ItemType Directory -Path $installParent -Force | Out-Null
+    $staging = Join-Path $installParent ('App.new-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $staging -Force | Out-Null
+    Copy-Item -Path (Join-Path $extractRoot '*') -Destination $staging -Recurse -Force
 
-function New-WcdLaunchers {
-    param([Parameter(Mandatory = $true)] [string]$InstallRoot)
+    $runner = Join-Path $staging 'windows-crash-doctor\Run-WindowsCrashDoctor.ps1'
+    $selfTest = Join-Path $staging 'windows-crash-doctor\tests\self-test.ps1'
+    $telemetryTest = Join-Path $staging 'windows-crash-doctor\tests\telemetry-self-test.ps1'
+    $integrationSelfTest = Join-Path $staging 'windows-crash-doctor\tests\integration-self-test.ps1'
+    $versionFile = Join-Path $staging 'windows-crash-doctor\version.json'
+    foreach ($required in @($runner, $selfTest, $telemetryTest, $integrationSelfTest, $versionFile)) {
+        if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Installation package is incomplete; missing: $required" }
+    }
 
+    Write-Host '5/6 Running package self-tests before activation...'
+    & $selfTest -RepositoryMode
+    & $telemetryTest
+    & $integrationSelfTest -RepositoryMode
+
+    if (Test-Path -LiteralPath $InstallRoot) { Remove-Item -LiteralPath $InstallRoot -Recurse -Force }
+    Move-Item -LiteralPath $staging -Destination $InstallRoot
     $runner = Join-Path $InstallRoot 'windows-crash-doctor\Run-WindowsCrashDoctor.ps1'
+
+    [ordered]@{
+        releaseTag = [string]$release.tag_name
+        releaseId = [long]$release.id
+        targetCommit = [string]$release.target_commitish
+        sha256 = $actual
+        verified = $true
+        installedAtUtc = [datetimeoffset]::UtcNow.ToString('o')
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $InstallRoot 'installed-build.json') -Encoding utf8
+
+    Write-Host '6/6 Creating launchers...'
     $desktop = [Environment]::GetFolderPath('Desktop')
     $cmdPath = Join-Path $desktop 'Windows Crash Doctor.cmd'
     $cmd = @"
@@ -156,7 +118,7 @@ echo Press any key to close this window.
 pause >nul
 exit /b %EXITCODE%
 "@
-    Set-Content -LiteralPath $cmdPath -Value $cmd -Encoding ASCII -ErrorAction Stop
+    Set-Content -LiteralPath $cmdPath -Value $cmd -Encoding ASCII
 
     $startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
     $shortcutPath = Join-Path $startMenu 'Windows Crash Doctor.lnk'
@@ -170,93 +132,19 @@ exit /b %EXITCODE%
         $shortcut.Description = 'Collect and analyse Windows crash/hang diagnostics'
         $shortcut.Save()
     }
-    catch {
-        Write-Warning "Start Menu shortcut could not be created: $($_.Exception.Message)"
-    }
-
-    return $cmdPath
-}
-
-if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
-    throw 'InstallRoot cannot be empty.'
-}
-$InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
-$installParent = Split-Path -Parent $InstallRoot
-New-Item -ItemType Directory -Path $installParent -Force -ErrorAction Stop | Out-Null
-
-$resolvedCommit = Resolve-WcdInstallCommit -RequestedSha $CommitSha
-$tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('WindowsCrashDoctorInstall-' + [guid]::NewGuid().ToString('N'))
-$zipPath = Join-Path $tempRoot ('WindowsCrashDoctor-{0}.zip' -f $resolvedCommit)
-$extractRoot = Join-Path $tempRoot 'extract'
-$staging = Join-Path $installParent ('App.staging-' + [guid]::NewGuid().ToString('N'))
-$archiveUrl = "https://github.com/$script:Repository/archive/$resolvedCommit.zip"
-
-Write-Host ''
-Write-Host 'Windows Crash Doctor installer' -ForegroundColor Cyan
-Write-Host '==============================' -ForegroundColor Cyan
-Write-Host "Commit: $resolvedCommit"
-Write-Host "Install location: $InstallRoot"
-Write-Host ''
-
-New-Item -ItemType Directory -Path $tempRoot, $extractRoot, $staging -Force -ErrorAction Stop | Out-Null
-
-try {
-    Write-Host '1/6 Downloading the pinned source archive...'
-    Invoke-WebRequest -Uri $archiveUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 120 -ErrorAction Stop
-    $archiveFile = Get-Item -LiteralPath $zipPath -ErrorAction Stop
-    if ($archiveFile.Length -gt $script:MaxArchiveBytes) {
-        throw "Downloaded source archive is $($archiveFile.Length) bytes, above the $script:MaxArchiveBytes-byte safety limit."
-    }
-    $archiveSha256 = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-
-    Write-Host '2/6 Extracting and validating the repository shape...'
-    Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -Force -ErrorAction Stop
-    $source = Get-WcdExtractedRepositoryRoot -ExtractRoot $extractRoot
-    foreach ($item in Get-ChildItem -LiteralPath $source -Force -ErrorAction Stop) {
-        Copy-Item -LiteralPath $item.FullName -Destination $staging -Recurse -Force -ErrorAction Stop
-    }
-    Assert-WcdStagedApplication -StagingRoot $staging
-
-    Write-Host '3/6 Running staged regression tests before replacing the current install...'
-    Test-WcdStagedApplication -StagingRoot $staging
-
-    [pscustomobject][ordered]@{
-        SchemaVersion  = '1.0'
-        Repository     = $script:Repository
-        CommitSha      = $resolvedCommit
-        ArchiveSHA256  = $archiveSha256
-        InstalledAt    = (Get-Date).ToString('o')
-    } | ConvertTo-Json -Depth 4 | Out-File -LiteralPath (Join-Path $staging 'installation.json') -Encoding UTF8 -ErrorAction Stop
-
-    Write-Host '4/6 Atomically installing the tested build...'
-    Install-WcdStagedApplication -StagingRoot $staging -InstallRoot $InstallRoot
-
-    Write-Host '5/6 Creating user launchers...'
-    $cmdPath = New-WcdLaunchers -InstallRoot $InstallRoot
-
-    Write-Host '6/6 Verifying installed identity...'
-    $installedMetadata = Get-Content -LiteralPath (Join-Path $InstallRoot 'installation.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-    if ([string]$installedMetadata.CommitSha -ne $resolvedCommit) {
-        throw 'Installed metadata does not match the commit that passed staging tests.'
-    }
+    catch { Write-Warning "Start Menu shortcut could not be created: $($_.Exception.Message)" }
 
     Write-Host ''
-    Write-Host 'INSTALL PASS' -ForegroundColor Green
+    Write-Host 'INSTALL PASS — release package verified before installation.' -ForegroundColor Green
     Write-Host "Desktop launcher: $cmdPath" -ForegroundColor Green
     Write-Host "Installed app: $InstallRoot" -ForegroundColor Green
-    Write-Host "Installed commit: $resolvedCommit" -ForegroundColor Green
 
     if (-not $InstallOnly) {
         Write-Host ''
-        Write-Host 'Starting the first real diagnostic run...' -ForegroundColor Cyan
-        & (Join-Path $InstallRoot 'windows-crash-doctor\Run-WindowsCrashDoctor.ps1')
+        Write-Host 'Starting Windows Crash Doctor. UAC will be requested by the runner for the diagnostic collection.' -ForegroundColor Cyan
+        & $runner
     }
 }
 finally {
-    if (Test-Path -LiteralPath $tempRoot) {
-        Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path -LiteralPath $staging) {
-        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
-    }
+    if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }

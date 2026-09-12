@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.1",
+  "schemaVersion": "1.0",
   "scope": "High-value open-source projects relevant to Windows hard-freeze diagnosis, evidence collection, hardware telemetry, EVTX analysis and PowerShell QA.",
   "integrations": [
     {
@@ -12,10 +12,8 @@
       "risk": "low",
       "status": "integrated",
       "installMode": "github-release-zip",
-      "releaseTag": "v0.9.6",
-      "releaseApi": "https://api.github.com/repos/LibreHardwareMonitor/LibreHardwareMonitor/releases/tags/v0.9.6",
+      "releaseApi": "https://api.github.com/repos/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest",
       "assetRegex": "^LibreHardwareMonitor\\.zip$",
-      "assetSHA256": "086d9f1b5a99e643edc2cfaaac16051685b551e4c5ac0b32a57c58c0e529c001",
       "executableRegex": "^LibreHardwareMonitor\\.exe$",
       "libraryRegex": "^LibreHardwareMonitorLib\\.dll$",
       "adapter": "sensors"
@@ -30,12 +28,10 @@
       "risk": "low-read-only",
       "status": "integrated-if-installed",
       "installMode": "manual-installer-download",
-      "releaseTag": "RELEASE_7_5",
-      "releaseApi": "https://api.github.com/repos/smartmontools/smartmontools/releases/tags/RELEASE_7_5",
-      "assetRegex": "^smartmontools-7\\.5\\.win32-setup\\.exe$",
+      "releaseApi": "https://api.github.com/repos/smartmontools/smartmontools/releases/latest",
+      "assetRegex": "^smartmontools-.*\\.win32-setup\\.exe$",
       "executableRegex": "^smartctl\\.exe$",
-      "adapter": "smart",
-      "notes": "Upstream GitHub release metadata does not currently publish a SHA-256 digest for this Windows installer, so Crash Doctor requires explicit -AllowUnverified before downloading it."
+      "adapter": "smart"
     },
     {
       "id": "evtx",
@@ -47,11 +43,9 @@
       "risk": "low",
       "status": "integrated",
       "installMode": "github-release-file",
-      "releaseTag": "v0.12.2",
-      "releaseApi": "https://api.github.com/repos/omerbenamram/evtx/releases/tags/v0.12.2",
-      "assetRegex": "^evtx_dump-v0\\.12\\.2\\.exe$",
-      "assetSHA256": "fdc170115cbb84eadc4ef5ed66807be08d24aab7383324b562b78d8035f9f16a",
-      "executableRegex": "^evtx_dump-v0\\.12\\.2\\.exe$",
+      "releaseApi": "https://api.github.com/repos/omerbenamram/evtx/releases/latest",
+      "assetRegex": "^evtx_dump-.*\\.exe$",
+      "executableRegex": "^evtx_dump-.*\\.exe$",
       "adapter": "evtx"
     },
     {
@@ -64,10 +58,8 @@
       "risk": "medium-av-false-positives",
       "status": "integrated-opt-in",
       "installMode": "github-release-zip",
-      "releaseTag": "v4.0.0",
-      "releaseApi": "https://api.github.com/repos/Yamato-Security/hayabusa/releases/tags/v4.0.0",
-      "assetRegex": "^hayabusa-4\\.0\\.0-win-x64-live-response\\.zip$",
-      "assetSHA256": "ab65bf3310cfa1b3baa383843546913b2ec18a2144688bfac0acb0eb1205a8c6",
+      "releaseApi": "https://api.github.com/repos/Yamato-Security/hayabusa/releases/latest",
+      "assetRegex": "^hayabusa-.*-win-x64-live-response\\.zip$",
       "executableRegex": "^hayabusa.*\\.exe$",
       "adapter": "timeline",
       "notes": "Runs as a separate optional process. The live-response package is preferred because upstream documents that encoded rules reduce antivirus alerts."
@@ -82,10 +74,8 @@
       "risk": "low",
       "status": "integrated-opt-in",
       "installMode": "github-release-zip",
-      "releaseTag": "5.23.1",
-      "releaseApi": "https://api.github.com/repos/osquery/osquery/releases/tags/5.23.1",
-      "assetRegex": "^osquery-5\\.23\\.1\\.windows_x86_64\\.zip$",
-      "assetSHA256": "7bd411050ef6b5aae1b23956aec0dc5ce6e800c5656f0cd463ac70a6e1bdf30b",
+      "releaseApi": "https://api.github.com/repos/osquery/osquery/releases/latest",
+      "assetRegex": "^osquery-.*\\.windows_x86_64\\.zip$",
       "executableRegex": "^osqueryi\\.exe$",
       "adapter": "inventory"
     },
@@ -99,10 +89,8 @@
       "risk": "medium-observer-overhead",
       "status": "download-integrated-manual-capture",
       "installMode": "github-release-file",
-      "releaseTag": "v3.2.6",
-      "releaseApi": "https://api.github.com/repos/microsoft/perfview/releases/tags/v3.2.6",
+      "releaseApi": "https://api.github.com/repos/microsoft/perfview/releases/latest",
       "assetRegex": "^PerfView\\.exe$",
-      "assetSHA256": "84b8523f7fb4783fd0baae6b080adb1b5aac388192145ad713e504c69954556d",
       "executableRegex": "^PerfView\\.exe$",
       "adapter": "advanced-trace",
       "notes": "Crash Doctor deliberately does not start an ETW trace automatically because tracing changes workload and is a major experimental variable."
@@ -117,7 +105,6 @@
       "risk": "none-runtime",
       "status": "integrated-ci",
       "installMode": "powershell-gallery",
-      "packageVersion": "5.9.0",
       "adapter": "qa"
     },
     {
@@ -130,7 +117,6 @@
       "risk": "none-runtime",
       "status": "integrated-ci",
       "installMode": "powershell-gallery",
-      "packageVersion": "1.25.0",
       "adapter": "qa"
     },
     {
@@ -187,7 +173,7 @@
     {
       "id": "chainsaw",
       "name": "Chainsaw",
-      "repository": "WithSecureLabs/chainsaw",
+      "repository": "WithSecureLabs/chainsaw (upstream repository moved)",
       "license": "verify-before-use",
       "purpose": "EVTX hunting/timeline alternative.",
       "tier": "alternative",

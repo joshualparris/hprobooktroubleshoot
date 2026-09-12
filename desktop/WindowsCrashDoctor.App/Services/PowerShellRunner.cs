@@ -3,91 +3,83 @@ using System.Text;
 
 namespace WindowsCrashDoctor.Services;
 
-public sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError);
+public enum ProcessExecutionStatus
+{
+    Completed,
+    CompletedWithWarnings,
+    Cancelled,
+    TimedOut,
+    FailedRetryable,
+    FailedPermanent,
+    Unavailable,
+    SkippedNotApplicable
+}
+
+public sealed record ProcessRunOptions(
+    TimeSpan Timeout,
+    int MaxRetries = 0,
+    bool RetryTransientFailures = false,
+    string? OperationId = null)
+{
+    public static ProcessRunOptions Default { get; } = new(TimeSpan.FromMinutes(5));
+}
+
+public sealed record ProcessResult(
+    int ExitCode,
+    string StandardOutput,
+    string StandardError,
+    ProcessExecutionStatus Status,
+    DateTimeOffset StartedAt,
+    DateTimeOffset FinishedAt,
+    TimeSpan Duration,
+    int AttemptCount,
+    string? FailureReason)
+{
+    public bool Succeeded => Status is ProcessExecutionStatus.Completed or ProcessExecutionStatus.CompletedWithWarnings;
+    public bool TimedOut => Status == ProcessExecutionStatus.TimedOut;
+    public bool Cancelled => Status == ProcessExecutionStatus.Cancelled;
+}
 
 public sealed class PowerShellRunner
 {
-    private const int MaxCapturedCharacters = 8 * 1024 * 1024;
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan MaximumTimeout = TimeSpan.FromHours(2);
+    private readonly RedactionService _redaction = new();
 
-    public Task<ProcessResult> RunFileAsync(
+    public async Task<ProcessResult> RunFileAsync(
         string scriptPath,
         IEnumerable<string>? arguments = null,
         Action<string>? onOutput = null,
         CancellationToken cancellationToken = default,
-        TimeSpan? timeout = null)
+        ProcessRunOptions? options = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(scriptPath);
-        var psi = CreatePowerShellStartInfo(redirectOutput: true);
+        var psi = CreatePowerShellStartInfo();
         psi.ArgumentList.Add("-File");
         psi.ArgumentList.Add(scriptPath);
-        AddArguments(psi, arguments);
-        return RunRedirectedAsync(psi, onOutput, cancellationToken, ValidateTimeout(timeout));
+        if (arguments is not null)
+            foreach (var argument in arguments) psi.ArgumentList.Add(argument);
+        return await RunWithPolicyAsync(psi, onOutput, cancellationToken, options ?? ProcessRunOptions.Default);
     }
 
-    public Task<ProcessResult> RunCommandAsync(
+    public async Task<ProcessResult> RunCommandAsync(
         string command,
         Action<string>? onOutput = null,
         CancellationToken cancellationToken = default,
-        TimeSpan? timeout = null)
+        ProcessRunOptions? options = null)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(command);
-        var psi = CreatePowerShellStartInfo(redirectOutput: true);
+        var psi = CreatePowerShellStartInfo();
         psi.ArgumentList.Add("-Command");
         psi.ArgumentList.Add(command);
-        return RunRedirectedAsync(psi, onOutput, cancellationToken, ValidateTimeout(timeout));
+        return await RunWithPolicyAsync(psi, onOutput, cancellationToken, options ?? ProcessRunOptions.Default);
     }
 
-    public async Task<int> RunFileElevatedAsync(
-        string scriptPath,
-        IEnumerable<string>? arguments = null,
-        CancellationToken cancellationToken = default,
-        TimeSpan? timeout = null)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(scriptPath);
-        var effectiveTimeout = ValidateTimeout(timeout);
-        var psi = CreatePowerShellStartInfo(redirectOutput: false);
-        psi.UseShellExecute = true;
-        psi.Verb = "runas";
-        psi.CreateNoWindow = false;
-        psi.ArgumentList.Add("-File");
-        psi.ArgumentList.Add(scriptPath);
-        AddArguments(psi, arguments);
-
-        using var process = new Process { StartInfo = psi };
-        if (!process.Start())
-            throw new InvalidOperationException("Could not start the elevated diagnostic collector.");
-
-        using var timeoutCts = new CancellationTokenSource(effectiveTimeout);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-        try
-        {
-            await process.WaitForExitAsync(linkedCts.Token);
-            return process.ExitCode;
-        }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-        {
-            TryKill(process);
-            throw new TimeoutException($"Elevated PowerShell exceeded the {effectiveTimeout.TotalMinutes:0.#}-minute timeout.");
-        }
-        catch
-        {
-            if (cancellationToken.IsCancellationRequested)
-                TryKill(process);
-            throw;
-        }
-    }
-
-    private static ProcessStartInfo CreatePowerShellStartInfo(bool redirectOutput)
+    private static ProcessStartInfo CreatePowerShellStartInfo()
     {
         var psi = new ProcessStartInfo
         {
             FileName = "powershell.exe",
             UseShellExecute = false,
-            RedirectStandardOutput = redirectOutput,
-            RedirectStandardError = redirectOutput,
-            CreateNoWindow = redirectOutput
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
         };
         psi.ArgumentList.Add("-NoProfile");
         psi.ArgumentList.Add("-ExecutionPolicy");
@@ -95,95 +87,120 @@ public sealed class PowerShellRunner
         return psi;
     }
 
-    private static void AddArguments(ProcessStartInfo psi, IEnumerable<string>? arguments)
-    {
-        if (arguments is null)
-            return;
-
-        foreach (var argument in arguments)
-            psi.ArgumentList.Add(argument ?? throw new ArgumentException("PowerShell arguments cannot contain null values.", nameof(arguments)));
-    }
-
-    private static TimeSpan ValidateTimeout(TimeSpan? timeout)
-    {
-        var value = timeout ?? DefaultTimeout;
-        if (value <= TimeSpan.Zero || value > MaximumTimeout)
-            throw new ArgumentOutOfRangeException(nameof(timeout), $"Timeout must be greater than zero and no more than {MaximumTimeout.TotalHours:0} hours.");
-        return value;
-    }
-
-    private static async Task<ProcessResult> RunRedirectedAsync(
+    private async Task<ProcessResult> RunWithPolicyAsync(
         ProcessStartInfo psi,
         Action<string>? onOutput,
         CancellationToken cancellationToken,
-        TimeSpan timeout)
+        ProcessRunOptions options)
     {
+        ProcessResult? latest = null;
+        var attempts = Math.Max(1, options.MaxRetries + 1);
+        for (var attempt = 1; attempt <= attempts; attempt++)
+        {
+            latest = await RunOnceAsync(psi, onOutput, cancellationToken, options.Timeout, attempt);
+            if (latest.Succeeded || latest.Cancelled) return latest;
+            if (!options.RetryTransientFailures || attempt >= attempts || !IsRetryable(latest)) return latest;
+
+            var delayMs = Math.Min(8000, (int)Math.Pow(2, attempt - 1) * 500) + Random.Shared.Next(0, 251);
+            onOutput?.Invoke($"Transient diagnostic failure; retrying attempt {attempt + 1}/{attempts} after {delayMs} ms.");
+            try { await Task.Delay(delayMs, cancellationToken); }
+            catch (OperationCanceledException)
+            {
+                return latest with { Status = ProcessExecutionStatus.Cancelled, FailureReason = "Operation cancelled before retry." };
+            }
+        }
+        return latest!;
+    }
+
+    private async Task<ProcessResult> RunOnceAsync(
+        ProcessStartInfo psi,
+        Action<string>? onOutput,
+        CancellationToken cancellationToken,
+        TimeSpan timeout,
+        int attempt)
+    {
+        var started = DateTimeOffset.UtcNow;
         using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
 
-        if (!process.Start())
-            throw new InvalidOperationException($"Could not start {psi.FileName}.");
+        try
+        {
+            if (!process.Start())
+                return Result(-1, ProcessExecutionStatus.Unavailable, "Process could not be started.");
+        }
+        catch (Exception ex)
+        {
+            return Result(-1, ProcessExecutionStatus.Unavailable, _redaction.RedactForLog(ex.Message));
+        }
 
         using var timeoutCts = new CancellationTokenSource(timeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-        using var registration = linkedCts.Token.Register(() => TryKill(process));
+        using var registration = linkedCts.Token.Register(() => KillTree(process));
 
         async Task PumpAsync(StreamReader reader, StringBuilder destination, bool error)
         {
             while (true)
             {
-                var line = await reader.ReadLineAsync(linkedCts.Token);
-                if (line is null)
-                    break;
-
-                AppendBounded(destination, line);
-                onOutput?.Invoke(error ? $"ERROR: {line}" : line);
+                var line = await reader.ReadLineAsync();
+                if (line is null) break;
+                destination.AppendLine(line);
+                onOutput?.Invoke(error ? $"ERROR: {_redaction.RedactForLog(line)}" : _redaction.RedactForLog(line));
             }
         }
 
-        var stdoutTask = PumpAsync(process.StandardOutput, stdout, error: false);
-        var stderrTask = PumpAsync(process.StandardError, stderr, error: true);
+        var stdoutTask = PumpAsync(process.StandardOutput, stdout, false);
+        var stderrTask = PumpAsync(process.StandardError, stderr, true);
         try
         {
             await process.WaitForExitAsync(linkedCts.Token);
-            await Task.WhenAll(stdoutTask, stderrTask);
         }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            throw new TimeoutException($"PowerShell exceeded the {timeout.TotalMinutes:0.#}-minute timeout.");
+            KillTree(process);
+            try { await process.WaitForExitAsync(); } catch { }
         }
+        await Task.WhenAll(stdoutTask, stderrTask);
 
-        cancellationToken.ThrowIfCancellationRequested();
-        return new ProcessResult(process.ExitCode, stdout.ToString(), stderr.ToString());
+        var finished = DateTimeOffset.UtcNow;
+        var redactedError = _redaction.RedactForLog(stderr.ToString());
+        var exitCode = process.HasExited ? process.ExitCode : -1;
+        var status = cancellationToken.IsCancellationRequested
+            ? ProcessExecutionStatus.Cancelled
+            : timeoutCts.IsCancellationRequested
+                ? ProcessExecutionStatus.TimedOut
+                : exitCode == 0
+                    ? (string.IsNullOrWhiteSpace(stderr.ToString()) ? ProcessExecutionStatus.Completed : ProcessExecutionStatus.CompletedWithWarnings)
+                    : ClassifyFailure(redactedError);
+        var reason = status switch
+        {
+            ProcessExecutionStatus.Cancelled => "Operation cancelled.",
+            ProcessExecutionStatus.TimedOut => $"Operation exceeded timeout of {timeout}.",
+            ProcessExecutionStatus.Completed => null,
+            ProcessExecutionStatus.CompletedWithWarnings => redactedError,
+            _ => string.IsNullOrWhiteSpace(redactedError) ? $"Process exited with code {exitCode}." : redactedError
+        };
+        return new ProcessResult(exitCode, stdout.ToString(), stderr.ToString(), status, started, finished, finished - started, attempt, reason);
+
+        ProcessResult Result(int code, ProcessExecutionStatus state, string? reason)
+        {
+            var finishedAt = DateTimeOffset.UtcNow;
+            return new ProcessResult(code, "", "", state, started, finishedAt, finishedAt - started, attempt, reason);
+        }
     }
 
-    private static void AppendBounded(StringBuilder destination, string line)
+    private static bool IsRetryable(ProcessResult result) => result.Status is ProcessExecutionStatus.TimedOut or ProcessExecutionStatus.FailedRetryable;
+
+    private static ProcessExecutionStatus ClassifyFailure(string error)
     {
-        if (destination.Length >= MaxCapturedCharacters)
-            return;
-
-        var remaining = MaxCapturedCharacters - destination.Length;
-        if (line.Length + Environment.NewLine.Length <= remaining)
-        {
-            destination.AppendLine(line);
-            return;
-        }
-
-        if (remaining > 0)
-            destination.Append(line.AsSpan(0, Math.Min(line.Length, remaining)));
+        var transient = new[] { "429", "502", "503", "504", "timed out", "timeout", "temporarily unavailable", "connection reset", "econnreset", "eai_again", "name resolution", "dns" };
+        return transient.Any(x => error.Contains(x, StringComparison.OrdinalIgnoreCase))
+            ? ProcessExecutionStatus.FailedRetryable
+            : ProcessExecutionStatus.FailedPermanent;
     }
 
-    private static void TryKill(Process process)
+    private static void KillTree(Process process)
     {
-        try
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-        }
-        catch
-        {
-            // Cancellation/timeout is already observable to the caller; cleanup must not replace that error.
-        }
+        try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
     }
 }
