@@ -34,7 +34,7 @@ function Read-WcdChecksumFile {
 
     $text = (Get-Content -LiteralPath $Path -Raw -ErrorAction Stop).Trim()
     $escapedName = [regex]::Escape($ExpectedFileName)
-    $match = [regex]::Match($text, "(?i)^([0-9a-f]{64})\\s+\\*?$escapedName$")
+    $match = [regex]::Match($text, "(?i)^([0-9a-f]{64})\s+\*?$escapedName$")
     if (-not $match.Success) {
         throw "Checksum file '$Path' must contain exactly one SHA-256 entry for '$ExpectedFileName'."
     }
@@ -51,7 +51,7 @@ function Assert-WcdSafeAssetName {
     }
 
     if ([System.IO.Path]::GetFileName($Name) -ne $Name -or
-        $Name.Contains('/') -or $Name.Contains('\\') -or $Name -in @('.', '..')) {
+        $Name.Contains('/') -or $Name.Contains('\') -or $Name -in @('.', '..')) {
         throw "Release manifest asset name is not a safe leaf file name: $Name"
     }
 }
