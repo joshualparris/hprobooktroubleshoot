@@ -146,14 +146,32 @@ if ($PSCmdlet.ParameterSetName -eq 'Dump') {
 
 $coreModulePath = Join-Path $PSScriptRoot 'CrashDoctor.psm1'
 $telemetryModulePath = Join-Path $PSScriptRoot 'TelemetryAnalysis.psm1'
+$registryModulePath = Join-Path $PSScriptRoot 'DiagnosticRegistry.psm1'
 Import-Module $coreModulePath -Force
 if (Test-Path -LiteralPath $telemetryModulePath -PathType Leaf) { Import-Module $telemetryModulePath -Force }
+Import-Module $registryModulePath -Force
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = $EvidencePath }
 if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) { New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null }
 
 $report = Invoke-CrashDoctorAnalysis -EvidencePath $EvidencePath
 $report = Add-WcdProductInfo -Report $report
+$registry = Get-WcdDiagnosticRegistry
+$registryCoverage = Get-WcdRegistryCoverage -EvidencePath $EvidencePath -Registry $registry
+$report.Coverage = [pscustomobject][ordered]@{
+    PresentFiles = @($registryCoverage.PresentFiles)
+    MissingFiles = @($registryCoverage.MissingFiles)
+    PresentCount = $registryCoverage.PresentCount
+    ExpectedCount = $registryCoverage.ExpectedCount
+    Percent = $registryCoverage.Percent
+}
+$report | Add-Member -NotePropertyName DiagnosticRegistry -NotePropertyValue ([pscustomobject][ordered]@{
+    RegistryVersion = [string]$registry.registryVersion
+    SchemaVersion = [string]$registry.schemaVersion
+    DiagnosticCount = @($registry.diagnostics).Count
+    Diagnostics = @($registryCoverage.Diagnostics)
+}) -Force
+
 $telemetry = $null
 if (Get-Command Invoke-CrashDoctorTelemetryAnalysis -ErrorAction SilentlyContinue) {
     $telemetry = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $EvidencePath
@@ -170,6 +188,7 @@ $productHeader = @(
     "- Collector: **$($product.CollectorVersion)**",
     "- Rule set: **$($product.RuleSetVersion)**",
     "- Schema: **$($product.SchemaVersion)**",
+    "- Diagnostic registry: **$($registry.registryVersion)**",
     "- Commit: ``$($product.Commit)``"
 ) -join [Environment]::NewLine
 $markdown += [Environment]::NewLine + [Environment]::NewLine + $productHeader
@@ -181,7 +200,7 @@ if ($null -ne $telemetry -and $telemetry.Available) {
 $markdownPath = Join-Path $OutputDirectory 'crash-doctor-report.md'
 $jsonPath = Join-Path $OutputDirectory 'crash-doctor-report.json'
 $markdown | Out-File -LiteralPath $markdownPath -Encoding utf8 -Width 500
-$report | ConvertTo-Json -Depth 12 | Out-File -LiteralPath $jsonPath -Encoding utf8 -Width 500
+$report | ConvertTo-Json -Depth 14 | Out-File -LiteralPath $jsonPath -Encoding utf8 -Width 500
 Write-Host "Crash Doctor report: $markdownPath"
 Write-Host "Machine-readable report: $jsonPath"
 if ($PassThru) { return $report }
