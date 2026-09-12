@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Text.Json;
 
 namespace WindowsCrashDoctor.Services;
@@ -8,10 +9,13 @@ public static class DesktopSelfTest
     public static int Run()
     {
         var temp = Path.Combine(Path.GetTempPath(), "WindowsCrashDoctorDesktopSelfTest-" + Guid.NewGuid().ToString("N"));
+        var errorPath = Path.Combine(Path.GetTempPath(), "WindowsCrashDoctor-selftest-error.txt");
         Directory.CreateDirectory(temp);
 
         try
         {
+            if (File.Exists(errorPath)) File.Delete(errorPath);
+
             var engine = new EngineExtractor();
             engine.EnsureExtracted();
 
@@ -72,26 +76,73 @@ public static class DesktopSelfTest
             if (!File.Exists(reportPath))
                 throw new InvalidOperationException("Packaged engine did not create crash-doctor-report.json.");
 
-            using var report = JsonDocument.Parse(File.ReadAllText(reportPath));
-            if (!report.RootElement.TryGetProperty("Telemetry", out var telemetry) ||
-                !telemetry.TryGetProperty("Sensor", out var sensor) ||
-                !sensor.TryGetProperty("Available", out var available) ||
-                !available.GetBoolean())
-                throw new InvalidOperationException("Packaged engine did not load embedded telemetry analysis.");
+            using (var report = JsonDocument.Parse(File.ReadAllText(reportPath)))
+            {
+                if (!report.RootElement.TryGetProperty("Telemetry", out var telemetry) ||
+                    !telemetry.TryGetProperty("Sensor", out var sensor) ||
+                    !sensor.TryGetProperty("Available", out var available) ||
+                    !available.GetBoolean())
+                    throw new InvalidOperationException("Packaged engine did not load embedded telemetry analysis.");
 
-            if (!report.RootElement.TryGetProperty("Product", out _))
-                throw new InvalidOperationException("Packaged engine report is missing product/build provenance.");
+                if (!report.RootElement.TryGetProperty("Product", out var product) ||
+                    !product.TryGetProperty("EngineVersion", out var engineVersion) ||
+                    engineVersion.GetString() != EngineExtractor.EngineVersion)
+                    throw new InvalidOperationException("Packaged engine report is missing matching product/build provenance.");
+            }
 
+            RunPrivacyExportSelfTest(temp);
             return 0;
         }
         catch (Exception ex)
         {
-            try { File.WriteAllText(Path.Combine(temp, "SELF-TEST-FAILED.txt"), ex.ToString()); } catch { }
+            try { File.WriteAllText(errorPath, ex.ToString()); } catch { }
             return 1;
         }
         finally
         {
             try { Directory.Delete(temp, true); } catch { }
         }
+    }
+
+    private static void RunPrivacyExportSelfTest(string tempRoot)
+    {
+        var source = Path.Combine(tempRoot, "privacy-source");
+        Directory.CreateDirectory(source);
+
+        const string bitLockerFixture = "111111-222222-333333-444444-555555-666666-777777-888888";
+        File.WriteAllText(Path.Combine(source, "report.txt"),
+            $"User: person@example.com\nPath: C:\\Users\\Joshua\\Desktop\\report.txt\nRecovery: {bitLockerFixture}\nPassword=do-not-export\n");
+        File.WriteAllText(Path.Combine(source, "private-key.txt"),
+            "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----");
+        File.WriteAllBytes(Path.Combine(source, "raw.evtx"), new byte[] { 1, 2, 3, 4 });
+
+        var service = new PrivacyExportService();
+        var plan = service.CreatePlan(source);
+        if (plan.IncludedCount != 1 || plan.ExcludedCount != 2 || plan.RedactedFileCount != 1)
+            throw new InvalidOperationException($"Privacy export plan was unexpected: include={plan.IncludedCount}, exclude={plan.ExcludedCount}, redacted={plan.RedactedFileCount}.");
+
+        var zipPath = Path.Combine(tempRoot, "privacy-export.zip");
+        var result = service.Export(plan, zipPath);
+        if (result.IncludedCount != 1 || result.ExcludedCount != 2 || result.TotalRedactions < 4)
+            throw new InvalidOperationException("Privacy export result did not preserve the preview policy/redactions.");
+
+        using var archive = ZipFile.OpenRead(zipPath);
+        if (archive.GetEntry("raw.evtx") is not null || archive.GetEntry("private-key.txt") is not null)
+            throw new InvalidOperationException("Privacy export included a high-risk artefact that should have been excluded.");
+        if (archive.GetEntry("export-manifest.json") is null)
+            throw new InvalidOperationException("Privacy export did not include export-manifest.json.");
+
+        var reportEntry = archive.GetEntry("report.txt")
+            ?? throw new InvalidOperationException("Privacy export omitted the expected report derivative.");
+        using var reader = new StreamReader(reportEntry.Open());
+        var exportedText = reader.ReadToEnd();
+        if (exportedText.Contains("person@example.com", StringComparison.OrdinalIgnoreCase) ||
+            exportedText.Contains(bitLockerFixture, StringComparison.Ordinal) ||
+            exportedText.Contains("do-not-export", StringComparison.Ordinal))
+            throw new InvalidOperationException("Privacy export left a known sensitive fixture unredacted.");
+        if (!exportedText.Contains("[REDACTED_EMAIL]", StringComparison.Ordinal) ||
+            !exportedText.Contains("[REDACTED_BITLOCKER_RECOVERY_PASSWORD]", StringComparison.Ordinal) ||
+            !exportedText.Contains("[REDACTED_SECRET]", StringComparison.Ordinal))
+            throw new InvalidOperationException("Privacy export did not emit expected redaction markers.");
     }
 }
