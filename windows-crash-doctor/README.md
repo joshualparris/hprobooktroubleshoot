@@ -2,7 +2,11 @@
 
 Windows Crash Doctor is an evidence-first Windows crash/hang triage engine.
 
-The current release on `main` is deliberately small and read-only: it consumes a reproducible collector snapshot, evaluates bounded diagnostic rules and emits human- and machine-readable reports. It is being expanded toward proactive capture, dump analysis, ETW correlation and incident history through the [100-item roadmap](../docs/ROADMAP_100.md).
+The project has two analysis paths:
+- **snapshot analysis** — consumes a reproducible collector folder and evaluates bounded diagnostic rules;
+- **dump analysis** — parses supported Windows crash-dump structures directly and emits Markdown + JSON.
+
+The app is being expanded through the [100-item roadmap](../docs/ROADMAP_100.md). Roadmap status must distinguish shipped capability from partial/in-progress work.
 
 ## What problem it solves
 
@@ -23,10 +27,10 @@ Crash Doctor tries to stop that. A finding must distinguish:
 ## Requirements
 
 - Windows 10/11 or Windows Server capable of running Windows PowerShell 5.1+.
-- Administrator rights are recommended for the collector; analysis can run with ordinary file access to the evidence folder.
-- No third-party PowerShell modules are required by the current snapshot analyser.
+- Administrator rights are recommended for the collector; analysis can run with ordinary file access to the evidence/dump.
+- No third-party PowerShell modules are required at runtime by the snapshot or native dump parser.
 
-## Quick start
+## Snapshot-analysis quick start
 
 From the repository root in an elevated PowerShell session:
 
@@ -49,7 +53,62 @@ To place reports elsewhere:
   -OutputDirectory C:\Evidence\Reports
 ```
 
-## Outputs
+## Dump-analysis quick start
+
+To parse an individual Windows dump:
+
+```powershell
+.\windows-crash-doctor\Invoke-CrashDoctor.ps1 `
+  -DumpPath C:\Windows\Minidump\example.dmp
+```
+
+Optional output directory:
+
+```powershell
+.\windows-crash-doctor\Invoke-CrashDoctor.ps1 `
+  -DumpPath C:\Evidence\example.dmp `
+  -OutputDirectory C:\Evidence\Reports
+```
+
+Dump mode writes:
+- `crash-doctor-dump-report.md`;
+- `crash-doctor-dump-report.json`.
+
+## WCD-001 native dump parser status
+
+**WCD-001 is in progress, not complete.** The current foundation is intentionally useful without overstating coverage.
+
+### Implemented
+
+For `MDMP` minidumps Crash Doctor currently parses:
+- header + stream directory with bounds validation;
+- processor architecture and Windows build information;
+- exception thread/code/address/parameters when present;
+- loaded-module list and module names;
+- thread count;
+- `MemoryList`, `Memory64List` and `MemoryInfoList` summary metadata;
+- known stream names while retaining unknown stream IDs.
+
+For Windows kernel crash-dump containers Crash Doctor currently recognises:
+- 64-bit `PAGE` / `DU64` headers;
+- 32-bit `PAGE` / `DUMP` headers;
+- machine architecture;
+- processor count;
+- bugcheck code and four parameters;
+- key dump-header pointers/metadata;
+- 64-bit dump-type/size/time metadata where available.
+
+### Still required before WCD-001 is complete
+
+- validated traversal of kernel/full-memory dump page data;
+- broader coverage of dump variants across Windows versions/architectures;
+- real kernel/full-memory fixtures, not only synthetic headers;
+- additional corruption/truncation fuzz cases;
+- a stable documented dump JSON schema once the native structures settle.
+
+Symbol resolution, stack unwinding and source mapping are deliberately separate roadmap items (`WCD-002`, `WCD-004`, `WCD-005`, `WCD-009`).
+
+## Snapshot outputs
 
 ### `crash-doctor-report.md`
 
@@ -62,11 +121,11 @@ Designed for a person investigating the machine. It contains:
 
 ### `crash-doctor-report.json`
 
-The stable automation boundary. External tooling should consume the JSON rather than scrape Markdown.
+The machine-readable automation boundary for snapshot analysis. External tooling should consume JSON rather than scrape Markdown.
 
-The schema is additive where practical. Breaking schema changes should increment `SchemaVersion`.
+Breaking schema changes should increment `SchemaVersion`.
 
-## Current rule families
+## Current snapshot rule families
 
 | Area | Current capability |
 |---|---|
@@ -79,14 +138,14 @@ The schema is additive where practical. Breaking schema changes should increment
 | Storage | Interpret current Windows storage reliability counters conservatively |
 | Events | Summarise WHEA, Kernel-Power 41 and volmgr 161 |
 | Reporting | Markdown + JSON |
-| Tests | Synthetic abnormal/quiet fixtures and public-evidence guard |
 
 ## Current limitations
 
-Crash Doctor currently does **not**:
-- parse `.dmp`/`.mdmp` memory dumps;
+Crash Doctor still does **not**:
 - resolve Microsoft symbols;
-- inspect call stacks, registers or dump-time locks;
+- unwind native/kernel call stacks;
+- inspect dump-time locks/deadlocks;
+- fully traverse arbitrary kernel/full-memory dump pages;
 - record ETW/WPR traces;
 - monitor process exceptions/hangs continuously;
 - maintain a persistent incident database;
@@ -95,7 +154,7 @@ Crash Doctor currently does **not**:
 - ingest the WER report store;
 - send reports to a bug tracker or vendor.
 
-These are not hidden limitations: they are explicitly tracked in [`../docs/ROADMAP_100.md`](../docs/ROADMAP_100.md).
+These are explicitly tracked in [`../docs/ROADMAP_100.md`](../docs/ROADMAP_100.md).
 
 ## Safety boundary
 
@@ -110,11 +169,11 @@ Crash Doctor must not silently:
 - run Driver Verifier;
 - upload dump files, ETL traces or private evidence.
 
-Future mutation helpers must be explicit, reversible where possible and separated from collection/analysis.
+Crash dumps can contain process memory, credentials, document fragments and identifiers. Dump parsing is local-only by default; generated reports still require review before publication.
 
 ## Input contract
 
-The canonical collector is:
+The canonical collector remains:
 
 ```powershell
 .\scripts\collect-diagnostics.ps1
@@ -122,25 +181,32 @@ The canonical collector is:
 
 Crash Doctor treats missing evidence as **unknown**, not healthy. A partial collection should reduce `Coverage` rather than generate confident negative findings.
 
-Binary EVTX files may be preserved for deeper work, but the current rule engine primarily consumes the collector's text exports.
+Dump mode accepts one local file path and rejects unknown signatures, impossible ranges and truncated structures rather than silently guessing.
 
-## Testing
+## Testing and QA
 
-Run:
+Repository QA runs on `windows-latest` and currently includes:
+- Windows PowerShell parser checks across all `.ps1`/`.psm1` sources;
+- PSScriptAnalyzer error gate;
+- existing snapshot-analysis synthetic self-test;
+- WCD-001 synthetic binary minidump/x64-kernel/x86-kernel fixtures;
+- invalid/truncated dump rejection;
+- dump CLI Markdown/JSON integration check;
+- a **real Windows DbgHelp `MiniDumpWriteDump` smoke test** of the CI PowerShell process;
+- integration self-test;
+- Pester integration suite;
+- public-evidence/recovery-key guard.
+
+Useful local commands:
 
 ```powershell
 .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
+.\windows-crash-doctor\tests\dump-parser-test.ps1
+.\windows-crash-doctor\tests\dump-parser-real-smoke.ps1
+.\windows-crash-doctor\tests\integration-self-test.ps1 -RepositoryMode
 ```
 
-The test suite builds synthetic abnormal and quiet fixtures and checks:
-- expected rules fire;
-- quiet fixtures do not produce high/critical false positives;
-- memory inventory parsing works;
-- Markdown and JSON files are emitted;
-- evidence-discipline wording remains present;
-- the repository public-evidence guard passes.
-
-CI runs PowerShell parsing and tests on a Windows runner.
+There is currently **no browser UI**, so Playwright is not an appropriate whole-app test runner yet. Browser E2E tests should be added when an HTML/web UI exists; the present product surface is PowerShell CLI + generated Markdown/JSON.
 
 ## Design principles
 

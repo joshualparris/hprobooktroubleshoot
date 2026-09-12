@@ -86,6 +86,14 @@ jobs:
         shell: powershell
         run: .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
 
+      - name: Run WCD-001 synthetic dump parser regression test
+        shell: powershell
+        run: .\windows-crash-doctor\tests\dump-parser-test.ps1
+
+      - name: Run WCD-001 real DbgHelp minidump smoke test
+        shell: powershell
+        run: .\windows-crash-doctor\tests\dump-parser-real-smoke.ps1
+
       - name: Run integration self-test
         shell: powershell
         run: .\windows-crash-doctor\tests\integration-self-test.ps1 -RepositoryMode
