@@ -38,15 +38,17 @@ The machine has produced genuine whole-system hard hangs with the display still 
 
 ## Repository layout
 
-- `analysis/` — current interpretation, timeline, hypothesis register, Claude comparison and next-test plan
-- `conversation/` — ChatGPT export and extracted Claude conversation
-- `evidence/manifests/` — SHA-256 hashes and duplicate mapping
-- `evidence/extracts/` — critical text extracted from large evidence files
+- `analysis/` — current interpretation, timeline, hypothesis register, Claude comparison, raw-evidence status and next-test plan
+- `conversation/` — integrity notes for the supplied ChatGPT/Claude conversation records; originals are in the complete evidence archive
+- `evidence/manifests/` — SHA-256 hashes and duplicate mapping for every mounted evidence file
+- `raw/` — directly committed raw items plus the complete-archive integrity record
 - `scripts/` — repeatable diagnostic collection commands
 - `SECURITY_NOTICE.md` — public-repository redaction note
 
 ## Raw binary evidence
 
-The original conversation includes EVTX files, screenshots and reports. The connected GitHub writer used for this snapshot can write text but cannot efficiently stream the tens of megabytes of binary EVTX evidence. Every supplied file is recorded by filename, byte size and SHA-256 in `evidence/manifests/evidence-manifest.csv`; byte-identical duplicates are identified there. The raw archives are preserved outside this Git commit and should be added later if full binary archival in GitHub is required.
+The original conversation includes large EVTX files, screenshots and reports. The connected GitHub writer cannot accept a local sandbox file directly, and routing tens of megabytes of binary data through model text risks truncation/corruption. Every supplied file is therefore recorded by filename, byte size and SHA-256 in `evidence/manifests/evidence-manifest.csv`, and a lossless complete archive was built in the working sandbox. See `raw/README.md`.
+
+One small raw report (`battery-report.html.gz`) is committed directly as a connector integrity test. The large raw archive is not falsely claimed as uploaded.
 
 **Do not add the exposed BitLocker recovery password to this repository.**
