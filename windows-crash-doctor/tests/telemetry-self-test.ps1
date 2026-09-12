@@ -105,6 +105,40 @@ not-json-and-must-be-skipped
     Assert-True (-not ($lhmIds -contains 'sensor-whea-counter-clean')) 'LibreHardwareMonitor path invented WHEA negative evidence.'
     Assert-True (-not ($lhmIds -contains 'sensor-drive-health-reassuring')) 'LibreHardwareMonitor path invented drive-health negative evidence.'
 
+    # Windows PowerShell 5.1 unwraps function output aggressively. These fixtures deliberately
+    # omit thermal/GPU-limit columns so zero-match helper output is exercised under StrictMode.
+    $cardinalityRoot = Join-Path $temp 'cardinality'
+    New-Item -ItemType Directory -Path $cardinalityRoot -Force | Out-Null
+
+    $zero = Join-Path $cardinalityRoot 'zero'
+    New-Item -ItemType Directory -Path $zero -Force | Out-Null
+    "Date,Time,`"Physical Memory Load [%]`",`"Total CPU Usage [%]`"" | Set-Content -LiteralPath (Join-Path $zero 'sensors.csv') -Encoding Default
+    $zeroTelemetry = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $zero
+    Assert-True (-not $zeroTelemetry.Sensor.Available) 'Header-only HWiNFO capture should be unavailable.'
+
+    $one = Join-Path $cardinalityRoot 'one'
+    New-Item -ItemType Directory -Path $one -Force | Out-Null
+    @'
+Date,Time,"Physical Memory Load [%]","Total CPU Usage [%]"
+12.9.2026,15:16:14.000,50,20
+'@ | Set-Content -LiteralPath (Join-Path $one 'sensors.csv') -Encoding Default
+    $oneTelemetry = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $one
+    Assert-True $oneTelemetry.Sensor.Available 'One-row HWiNFO capture reported unavailable.'
+    Assert-True ($oneTelemetry.Sensor.Summary.SampleCount -eq 1) 'One-row HWiNFO capture did not preserve cardinality.'
+    Assert-True ($oneTelemetry.Sensor.Summary.ThermalThrottleSampleCount -eq 0) 'Missing thermal columns should produce zero positive samples, not an exception.'
+
+    $many = Join-Path $cardinalityRoot 'many'
+    New-Item -ItemType Directory -Path $many -Force | Out-Null
+    @'
+Date,Time,"Physical Memory Load [%]","Total CPU Usage [%]"
+12.9.2026,15:16:14.000,50,20
+12.9.2026,15:16:16.000,60,30
+12.9.2026,15:16:18.000,70,40
+'@ | Set-Content -LiteralPath (Join-Path $many 'sensors.csv') -Encoding Default
+    $manyTelemetry = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $many
+    Assert-True $manyTelemetry.Sensor.Available 'Multi-row HWiNFO capture reported unavailable.'
+    Assert-True ($manyTelemetry.Sensor.Summary.SampleCount -eq 3) 'Multi-row HWiNFO capture did not preserve cardinality.'
+
     Write-Host 'Windows Crash Doctor telemetry self-test: PASS'
 }
 finally {
