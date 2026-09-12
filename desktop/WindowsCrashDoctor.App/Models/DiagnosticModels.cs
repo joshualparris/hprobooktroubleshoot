@@ -1,6 +1,3 @@
-using System.Text.Json.Serialization;
-using System.Windows.Media;
-
 namespace WindowsCrashDoctor.Models;
 
 public sealed class CrashDoctorReport
@@ -46,24 +43,6 @@ public sealed class DiagnosticFinding
     public string Evidence { get; set; } = "";
     public string Interpretation { get; set; } = "";
     public string NextStep { get; set; } = "";
-
-    [JsonIgnore]
-    public Brush SeverityBrush => Severity switch
-    {
-        "Critical" or "High" => new SolidColorBrush(Color.FromRgb(217, 45, 32)),
-        "Medium" => new SolidColorBrush(Color.FromRgb(220, 104, 3)),
-        "Low" => new SolidColorBrush(Color.FromRgb(37, 99, 235)),
-        _ => new SolidColorBrush(Color.FromRgb(3, 152, 85))
-    };
-
-    [JsonIgnore]
-    public Brush SeverityBackground => Severity switch
-    {
-        "Critical" or "High" => new SolidColorBrush(Color.FromRgb(254, 243, 242)),
-        "Medium" => new SolidColorBrush(Color.FromRgb(255, 246, 232)),
-        "Low" => new SolidColorBrush(Color.FromRgb(234, 241, 255)),
-        _ => new SolidColorBrush(Color.FromRgb(236, 253, 243))
-    };
 }
 
 public sealed class DiagnosticRunHistory
@@ -77,16 +56,40 @@ public sealed class DiagnosticRunHistory
     public int MediumCount { get; set; }
     public int FindingCount { get; set; }
     public double CoveragePercent { get; set; }
-
-    [JsonIgnore]
-    public string WhenText => RanAt.LocalDateTime.ToString("ddd d MMM, h:mm tt");
-
-    [JsonIgnore]
-    public string SummaryText => $"{FindingCount} findings • {CoveragePercent:0}% coverage";
 }
 
 public sealed class AppSettings
 {
     public bool DarkMode { get; set; }
     public string? LastEvidencePath { get; set; }
+}
+
+public sealed class HistoryDocument
+{
+    public const string CurrentSchemaVersion = "1.0";
+    public string SchemaVersion { get; set; } = CurrentSchemaVersion;
+    public List<DiagnosticRunHistory> Runs { get; set; } = new();
+}
+
+public sealed class SettingsDocument
+{
+    public const string CurrentSchemaVersion = "1.0";
+    public string SchemaVersion { get; set; } = CurrentSchemaVersion;
+    public AppSettings Settings { get; set; } = new();
+}
+
+public sealed class CollectionStatus
+{
+    public string? SchemaVersion { get; set; }
+    public string? CollectionId { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+    public bool CompletedWithErrors { get; set; }
+    public int FailureCount { get; set; }
+    public List<CollectionFailure> Failures { get; set; } = new();
+}
+
+public sealed class CollectionFailure
+{
+    public string Stage { get; set; } = "";
+    public string Message { get; set; } = "";
 }
