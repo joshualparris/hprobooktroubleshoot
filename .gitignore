@@ -7,6 +7,11 @@ HPProBook-*/
 *.dmp
 *.etl
 
+# Generated Crash Doctor packages / local runtime copies
+dist/
+WindowsCrashDoctor-*/
+windows-crash-doctor/runtime/
+
 # OS/editor noise
 Thumbs.db
 .DS_Store
