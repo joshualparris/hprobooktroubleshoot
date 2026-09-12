@@ -21,41 +21,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Parse CrashDoctor module
+      - name: Parse PowerShell sources
         shell: powershell
         run: |
-          $tokens = $null; $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\windows-crash-doctor\CrashDoctor.psm1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
-          if ($parseErrors.Count) { $parseErrors | Format-List | Out-String | Write-Host; exit 1 }
+          $diagnostics = New-Object System.Collections.Generic.List[string]
+          Get-ChildItem '.\windows-crash-doctor', '.\scripts' -Recurse -File |
+            Where-Object { $_.Extension -in @('.ps1', '.psm1') } |
+            ForEach-Object {
+              $tokens = $null
+              $parseErrors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+              foreach ($parseError in @($parseErrors)) {
+                $diagnostics.Add("$($_.FullName):$($parseError.Extent.StartLineNumber):$($parseError.Extent.StartColumnNumber): $($parseError.Message)")
+              }
+            }
 
-      - name: Parse CrashDoctor CLI
-        shell: powershell
-        run: |
-          $tokens = $null; $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\windows-crash-doctor\Invoke-CrashDoctor.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
-          if ($parseErrors.Count) { $parseErrors | Format-List | Out-String | Write-Host; exit 1 }
+          if ($diagnostics.Count -eq 0) {
+            'PASS' | Set-Content -Path ci-parser-diagnostics.txt -Encoding UTF8
+          }
+          else {
+            'FAIL' | Set-Content -Path ci-parser-diagnostics.txt -Encoding UTF8
+            $diagnostics | Add-Content -Path ci-parser-diagnostics.txt -Encoding UTF8
+          }
 
-      - name: Parse CrashDoctor self-test
-        shell: powershell
-        run: |
-          $tokens = $null; $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\windows-crash-doctor\tests\self-test.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
-          if ($parseErrors.Count) { $parseErrors | Format-List | Out-String | Write-Host; exit 1 }
+      - name: Upload parser diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-doctor-parser-diagnostics
+          path: ci-parser-diagnostics.txt
+          retention-days: 7
 
-      - name: Parse collector
+      - name: Enforce parser result
         shell: powershell
         run: |
-          $tokens = $null; $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\collect-diagnostics.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
-          if ($parseErrors.Count) { $parseErrors | Format-List | Out-String | Write-Host; exit 1 }
-
-      - name: Parse evidence utilities
-        shell: powershell
-        run: |
-          foreach ($file in @('.\scripts\hash-evidence.ps1', '.\scripts\check-public-evidence.ps1')) {
-            $tokens = $null; $parseErrors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$parseErrors) | Out-Null
-            if ($parseErrors.Count) { Write-Host "Parse errors in $file"; $parseErrors | Format-List | Out-String | Write-Host; exit 1 }
+          $status = Get-Content -Path ci-parser-diagnostics.txt -First 1
+          if ($status -ne 'PASS') {
+            Get-Content -Path ci-parser-diagnostics.txt | Write-Host
+            exit 1
           }
 
       - name: Run Windows Crash Doctor self-test
