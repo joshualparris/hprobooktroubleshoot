@@ -8,11 +8,13 @@ $ErrorActionPreference = 'Stop'
 
 $crashDoctorRoot = Split-Path -Parent $PSScriptRoot
 $repositoryRoot = Split-Path -Parent $crashDoctorRoot
-$modulePath = Join-Path $crashDoctorRoot 'CrashDoctor.psm1'
+$coreModulePath = Join-Path $crashDoctorRoot 'CrashDoctor.psm1'
+$reportingModulePath = Join-Path $crashDoctorRoot 'Reporting.psm1'
 $cliPath = Join-Path $crashDoctorRoot 'Invoke-CrashDoctor.ps1'
 $securityScanner = Join-Path $repositoryRoot 'scripts\check-public-evidence.ps1'
 
-Import-Module $modulePath -Force
+Import-Module $coreModulePath -Force
+Import-Module $reportingModulePath -Force
 
 function Assert-True {
     param(
@@ -25,13 +27,11 @@ function Assert-True {
     }
 }
 
-$temp = Join-Path ([System.IO.Path]::GetTempPath()) ("CrashDoctorSelfTest-" + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('CrashDoctorSelfTest-' + [guid]::NewGuid().ToString('N'))
 $fixture = Join-Path $temp 'fixture-abnormal'
 $quietFixture = Join-Path $temp 'fixture-quiet'
 $output = Join-Path $temp 'output'
-New-Item -ItemType Directory -Path $fixture -Force | Out-Null
-New-Item -ItemType Directory -Path $quietFixture -Force | Out-Null
-New-Item -ItemType Directory -Path $output -Force | Out-Null
+New-Item -ItemType Directory -Path $fixture, $quietFixture, $output -Force | Out-Null
 
 try {
     @'
@@ -43,9 +43,7 @@ SMBIOSBIOSVersion : N92 Ver. 01.04
 Name : N92 Ver. 01.04
 '@ | Set-Content -LiteralPath (Join-Path $fixture 'bios.txt') -Encoding utf8
 
-    @'
-Capacity : 4294967296
-'@ | Set-Content -LiteralPath (Join-Path $fixture 'memory.txt') -Encoding utf8
+    'Capacity : 4294967296' | Set-Content -LiteralPath (Join-Path $fixture 'memory.txt') -Encoding utf8
 
     @'
 AllocatedBaseSize : 1380
@@ -110,16 +108,20 @@ Message : Dump file creation failed due to error during dump creation.
 
     $report = Invoke-CrashDoctorAnalysis -EvidencePath $fixture
     $ids = @($report.Findings | ForEach-Object { $_.Id })
+    foreach ($expectedId in @(
+        'firmware-device-failed-start',
+        'generalised-or-reused-windows-image',
+        'intel-xtu-stack-present',
+        'crash-dump-capture-risk',
+        'storage-counters-reassuring',
+        'bitlocker-conversion-active',
+        'fast-startup-disabled',
+        'kernel-power-41-present',
+        'volmgr-161-present'
+    )) {
+        Assert-True ($ids -contains $expectedId) "Expected finding did not fire: $expectedId"
+    }
 
-    Assert-True ($ids -contains 'firmware-device-failed-start') 'Firmware Code 10 rule did not fire.'
-    Assert-True ($ids -contains 'generalised-or-reused-windows-image') 'Sysprep/reused-image rule did not fire.'
-    Assert-True ($ids -contains 'intel-xtu-stack-present') 'XTU rule did not fire.'
-    Assert-True ($ids -contains 'crash-dump-capture-risk') 'Crash-dump/pagefile rule did not fire.'
-    Assert-True ($ids -contains 'storage-counters-reassuring') 'Storage reliability rule did not fire.'
-    Assert-True ($ids -contains 'bitlocker-conversion-active') 'BitLocker context rule did not fire.'
-    Assert-True ($ids -contains 'fast-startup-disabled') 'Fast Startup rule did not fire.'
-    Assert-True ($ids -contains 'kernel-power-41-present') 'Kernel-Power 41 rule did not fire.'
-    Assert-True ($ids -contains 'volmgr-161-present') 'volmgr 161 rule did not fire.'
     Assert-True ($report.EventSummary.WHEAReferences -eq 0) 'Fixture unexpectedly reported WHEA evidence.'
     Assert-True ($report.Inventory.Model -eq 'HP ProBook 11 G2') 'Model parsing failed.'
     Assert-True ($report.Inventory.BIOS -eq 'N92 Ver. 01.04') 'BIOS parsing failed.'
@@ -131,45 +133,31 @@ Message : Dump file creation failed due to error during dump creation.
     Assert-True (Test-Path -LiteralPath (Join-Path $output 'crash-doctor-report.md')) 'CLI did not produce Markdown output.'
     Assert-True (Test-Path -LiteralPath (Join-Path $output 'crash-doctor-report.json')) 'CLI did not produce JSON output.'
 
-    @'
-Model : Generic Test Laptop
-'@ | Set-Content -LiteralPath (Join-Path $quietFixture 'computer-system.txt') -Encoding utf8
-
-    @'
-SMBIOSBIOSVersion : TEST 1.0
-'@ | Set-Content -LiteralPath (Join-Path $quietFixture 'bios.txt') -Encoding utf8
-
+    'Model : Generic Test Laptop' | Set-Content -LiteralPath (Join-Path $quietFixture 'computer-system.txt') -Encoding utf8
+    'SMBIOSBIOSVersion : TEST 1.0' | Set-Content -LiteralPath (Join-Path $quietFixture 'bios.txt') -Encoding utf8
     @'
 Capacity : 4294967296
 Capacity : 4294967296
 '@ | Set-Content -LiteralPath (Join-Path $quietFixture 'memory.txt') -Encoding utf8
-
     @'
 AllocatedBaseSize : 8192
 CrashDumpEnabled : 7
 '@ | Set-Content -LiteralPath (Join-Path $quietFixture 'pagefile-and-dumps.txt') -Encoding utf8
-
     @'
 ReadErrorsTotal : 0
 ReadErrorsUncorrected : 0
 '@ | Set-Content -LiteralPath (Join-Path $quietFixture 'storage-reliability.txt') -Encoding utf8
-
     @'
 Standby (S3)
 Hibernate
 Fast Startup
 '@ | Set-Content -LiteralPath (Join-Path $quietFixture 'powercfg-a.txt') -Encoding utf8
-
-    @'
-No devices with problems were found.
-'@ | Set-Content -LiteralPath (Join-Path $quietFixture 'problem-devices.txt') -Encoding utf8
-
+    'No devices with problems were found.' | Set-Content -LiteralPath (Join-Path $quietFixture 'problem-devices.txt') -Encoding utf8
     @'
 Conversion Status: Fully Encrypted
 Percentage Encrypted: 100.0%
 Protection Status: On
 '@ | Set-Content -LiteralPath (Join-Path $quietFixture 'bitlocker-status.txt') -Encoding utf8
-
     @'
 TimeCreated : 12/09/2026 4:00:00 PM
 Id : 1
