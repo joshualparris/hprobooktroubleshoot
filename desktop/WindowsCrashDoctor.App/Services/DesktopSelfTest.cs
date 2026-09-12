@@ -70,6 +70,8 @@ public static class DesktopSelfTest
                     throw new InvalidOperationException("Report coverage is not sourced from the canonical diagnostic registry.");
             }
 
+            RunReportBoundarySelfTest(temp, engine, reportPath);
+            RunPersistenceSelfTest(temp);
             RunRunnerSelfTest();
             RunComparisonSelfTest();
             RunPrivacyExportSelfTest(temp);
@@ -77,13 +79,77 @@ public static class DesktopSelfTest
         }
         catch (Exception ex)
         {
-            try { File.WriteAllText(errorPath, ex.ToString()); } catch { }
+            try
+            {
+                File.WriteAllText(errorPath, ex.ToString());
+            }
+            catch (Exception writeEx)
+            {
+                Trace.WriteLine($"Desktop self-test could not write its failure diagnostic: {writeEx.Message}");
+            }
             return 1;
         }
         finally
         {
-            try { Directory.Delete(temp, true); } catch { }
+            try
+            {
+                Directory.Delete(temp, true);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"Desktop self-test cleanup failed: {ex.Message}");
+            }
         }
+    }
+
+    private static void RunReportBoundarySelfTest(string tempRoot, EngineExtractor engine, string validReportPath)
+    {
+        var reader = new CrashDoctorReportReader(engine);
+        var valid = reader.ReadAsync(validReportPath).GetAwaiter().GetResult();
+        if (valid.Findings.Count == 0)
+            throw new InvalidOperationException("Validated packaged report unexpectedly contained no findings.");
+
+        var invalidPath = Path.Combine(tempRoot, "invalid-schema-report.json");
+        var invalid = new CrashDoctorReport
+        {
+            SchemaVersion = "999.0",
+            Product = new ProductInfo { SchemaVersion = "999.0" },
+            Coverage = new CoverageInfo { PresentCount = 0, ExpectedCount = 0, Percent = 0 }
+        };
+        File.WriteAllText(invalidPath, JsonSerializer.Serialize(invalid));
+        try
+        {
+            reader.ReadAsync(invalidPath).GetAwaiter().GetResult();
+            throw new InvalidOperationException("Report boundary accepted an unsupported schema.");
+        }
+        catch (InvalidDataException)
+        {
+            // Expected: untrusted report state is rejected before reaching the UI.
+        }
+    }
+
+    private static void RunPersistenceSelfTest(string tempRoot)
+    {
+        var root = Path.Combine(tempRoot, "persistence");
+        var history = new HistoryService(root);
+        if (!history.CheckHealth(out var detail) || !detail.Contains("schema 1", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("SQLite history schema/version invariant failed: " + detail);
+
+        history.SaveSettings(new AppSettings { DarkMode = true, LastEvidencePath = tempRoot });
+        var settingsPath = Path.Combine(root, "settings.json");
+        var settingsJson = File.ReadAllText(settingsPath);
+        if (!settingsJson.Contains("SchemaVersion", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Settings were not persisted in the versioned envelope.");
+        var loaded = history.LoadSettings();
+        if (!loaded.DarkMode || !string.Equals(loaded.LastEvidencePath, tempRoot, StringComparison.Ordinal))
+            throw new InvalidOperationException("Settings round-trip invariant failed.");
+
+        File.WriteAllText(settingsPath, "{ this is not valid json }");
+        var degraded = history.LoadSettings();
+        if (degraded.DarkMode || string.IsNullOrWhiteSpace(history.StartupWarning))
+            throw new InvalidOperationException("Corrupt settings did not degrade to defaults with a visible warning.");
+        if (File.ReadAllText(settingsPath) != "{ this is not valid json }")
+            throw new InvalidOperationException("Corrupt settings source was modified during failed load.");
     }
 
     private static void RunRunnerSelfTest()
