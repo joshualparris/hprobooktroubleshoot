@@ -1,30 +1,47 @@
 # Windows Crash Doctor
 
-A small, dependency-free PowerShell diagnostic engine for evidence collected by this repository.
+Windows Crash Doctor is an evidence-first Windows crash/hang triage engine.
 
-It is intentionally **evidence-first**: it reports what the supplied logs support, distinguishes current-machine state from inherited history, and avoids turning correlations into root-cause claims.
+The current release on `main` is deliberately small and read-only: it consumes a reproducible collector snapshot, evaluates bounded diagnostic rules and emits human- and machine-readable reports. It is being expanded toward proactive capture, dump analysis, ETW correlation and incident history through the [100-item roadmap](../docs/ROADMAP_100.md).
+
+## What problem it solves
+
+Windows failure investigations commonly mix together:
+- the failure itself;
+- events written only after the reboot;
+- old events inherited from a cloned/refurb image;
+- speculation about a suspicious driver;
+- several simultaneous “fixes”.
+
+Crash Doctor tries to stop that. A finding must distinguish:
+- **evidence** — what was actually captured;
+- **interpretation** — what that evidence reasonably supports;
+- **confidence** — how reliable that interpretation is;
+- **severity** — how urgently it matters;
+- **next step** — the smallest useful follow-up action.
+
+## Requirements
+
+- Windows 10/11 or Windows Server capable of running Windows PowerShell 5.1+.
+- Administrator rights are recommended for the collector; analysis can run with ordinary file access to the evidence folder.
+- No third-party PowerShell modules are required by the current snapshot analyser.
 
 ## Quick start
 
-First collect a snapshot from an elevated PowerShell:
+From the repository root in an elevated PowerShell session:
 
 ```powershell
 .\scripts\collect-diagnostics.ps1
 ```
 
-Then analyse the generated folder:
+Then:
 
 ```powershell
 .\windows-crash-doctor\Invoke-CrashDoctor.ps1 `
   -EvidencePath "$env:USERPROFILE\Desktop\HPProBook-YYYYMMDD-HHMMSS"
 ```
 
-Two files are written into the evidence folder by default:
-
-- `crash-doctor-report.md` — human-readable findings;
-- `crash-doctor-report.json` — machine-readable findings for later tooling.
-
-To keep the report elsewhere:
+To place reports elsewhere:
 
 ```powershell
 .\windows-crash-doctor\Invoke-CrashDoctor.ps1 `
@@ -32,38 +49,80 @@ To keep the report elsewhere:
   -OutputDirectory C:\Evidence\Reports
 ```
 
-## What it currently detects
+## Outputs
 
-The first rule set covers the evidence patterns that mattered in this investigation:
+### `crash-doctor-report.md`
 
-- firmware-class Code 10 / `CM_PROB_FAILED_START`;
-- current Firmware-class `Status: OK` as useful post-change baseline evidence;
-- Sysprep/respecialised images and retained non-present-device state;
-- Intel XTU component presence;
-- Conexant OEM audio-stack presence;
-- active BitLocker conversion as context;
-- hibernation/Fast Startup disabled state;
-- pagefile/crash-dump capture risk;
-- storage reliability counters;
-- WHEA references;
-- Kernel-Power Event 41;
-- volmgr Event 161.
+Designed for a person investigating the machine. It contains:
+- inventory/coverage;
+- detected findings;
+- severity/confidence;
+- bounded interpretation;
+- next diagnostic action.
 
-Each finding contains severity, confidence, exact evidence, a deliberately bounded interpretation and the next diagnostic step.
+### `crash-doctor-report.json`
 
-The tool does **not** automatically flash firmware, remove drivers, change pagefile settings, decrypt BitLocker, uninstall XTU or alter power policy.
+The stable automation boundary. External tooling should consume the JSON rather than scrape Markdown.
 
-## Why no automatic remediation?
+The schema is additive where practical. Breaking schema changes should increment `SchemaVersion`.
 
-This repository is investigating intermittent hard hangs. Changing several variables together destroys evidence. Crash Doctor therefore stays read-only and produces a decision report rather than trying to “fix everything”.
+## Current rule families
 
-Remediation should remain a separate, explicit action after the evidence has been preserved.
+| Area | Current capability |
+|---|---|
+| Firmware | Detect firmware-class failed-start/Code 10 and current OK state |
+| Image provenance | Detect Sysprep/respecialisation and retained non-present-device state |
+| OEM/tuning | Detect XTU and Conexant-related evidence without claiming causality |
+| BitLocker | Report conversion context without treating repeated percentages as proof of a stall |
+| Power | Identify hibernation/Fast Startup state from collected evidence |
+| Crash capture | Identify weak pagefile/dump configuration |
+| Storage | Interpret current Windows storage reliability counters conservatively |
+| Events | Summarise WHEA, Kernel-Power 41 and volmgr 161 |
+| Reporting | Markdown + JSON |
+| Tests | Synthetic abnormal/quiet fixtures and public-evidence guard |
+
+## Current limitations
+
+Crash Doctor currently does **not**:
+- parse `.dmp`/`.mdmp` memory dumps;
+- resolve Microsoft symbols;
+- inspect call stacks, registers or dump-time locks;
+- record ETW/WPR traces;
+- monitor process exceptions/hangs continuously;
+- maintain a persistent incident database;
+- deduplicate repeated crashes;
+- show an interactive timeline;
+- ingest the WER report store;
+- send reports to a bug tracker or vendor.
+
+These are not hidden limitations: they are explicitly tracked in [`../docs/ROADMAP_100.md`](../docs/ROADMAP_100.md).
+
+## Safety boundary
+
+The analysis path is read-only. Diagnostic recommendations are not the same as authorised remediation.
+
+Crash Doctor must not silently:
+- flash BIOS/UEFI;
+- install/uninstall drivers;
+- disable BitLocker or security controls;
+- change dump/pagefile policy;
+- disable hibernation;
+- run Driver Verifier;
+- upload dump files, ETL traces or private evidence.
+
+Future mutation helpers must be explicit, reversible where possible and separated from collection/analysis.
 
 ## Input contract
 
-Crash Doctor consumes the text files produced by `scripts/collect-diagnostics.ps1`. Missing files reduce coverage but do not make the analysis fail. The report states exactly which expected inputs were present.
+The canonical collector is:
 
-Binary `.evtx` files are preserved by the collector for deeper manual analysis, but the current rule engine intentionally reads the text exports first so it remains dependency-free. The collector also records OS/boot time, published drivers and a focused system-driver view so post-change snapshots can prove what is actually loaded.
+```powershell
+.\scripts\collect-diagnostics.ps1
+```
+
+Crash Doctor treats missing evidence as **unknown**, not healthy. A partial collection should reduce `Coverage` rather than generate confident negative findings.
+
+Binary EVTX files may be preserved for deeper work, but the current rule engine primarily consumes the collector's text exports.
 
 ## Testing
 
@@ -73,22 +132,41 @@ Run:
 .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
 ```
 
-The self-test creates both abnormal and quiet synthetic fixtures, confirms the important rules fire without high-severity false positives on the quiet fixture, exercises Markdown/JSON output, and runs the public-evidence secret guard.
+The test suite builds synthetic abnormal and quiet fixtures and checks:
+- expected rules fire;
+- quiet fixtures do not produce high/critical false positives;
+- memory inventory parsing works;
+- Markdown and JSON files are emitted;
+- evidence-discipline wording remains present;
+- the repository public-evidence guard passes.
 
-GitHub Actions runs the same self-test on `windows-latest`.
-
-## Safety
-
-This tool can process logs containing serial numbers, account names, MAC addresses and other device identifiers. Generated reports should still be reviewed before being published.
-
-The repository-level guard scans text files for BitLocker-style 48-digit recovery passwords, but it is **not** a complete secret scanner. See [`../SECURITY_NOTICE.md`](../SECURITY_NOTICE.md).
+CI runs PowerShell parsing and tests on a Windows runner.
 
 ## Design principles
 
-- Observed evidence and interpretation are separate fields.
-- Absence of a log event is not treated as proof of health.
-- Event 41 is aftermath evidence, not a cause.
-- A reused Windows image is a confounder, not automatically the root cause.
-- Firmware Code 10 is an abnormal state, not automatic proof of an SMI/SMM hang.
-- One major change at a time.
-- All diagnostic outputs are reproducible from a named snapshot folder.
+1. Understand before changing.
+2. One concept, one source of truth.
+3. Collection and remediation are separate.
+4. Missing data is unknown, not proof of health.
+5. Event 41 is aftermath evidence, not a root cause.
+6. Historical Windows-image state is not automatically current-machine state.
+7. A suspicious component is a hypothesis until discriminating evidence supports it.
+8. Prefer controlled A/B tests over batches of changes.
+9. Every finding should be reproducible from named evidence.
+10. Privacy, retention and provenance are diagnostic features, not documentation afterthoughts.
+
+## Where the project is going
+
+The ten-tool benchmark in [`../docs/COMPARABLE_TOOLS_RESEARCH.md`](../docs/COMPARABLE_TOOLS_RESEARCH.md) produced 100 concrete upgrades spanning:
+- native dump analysis and symbols;
+- trigger-based capture;
+- ETW timelines;
+- ProcMon-style activity correlation;
+- WER ingestion;
+- automatic crash detection;
+- history/deduplication;
+- privacy review and retention;
+- remote retracing;
+- debugger and issue-tracker integrations.
+
+Use [`../docs/README.md`](../docs/README.md) as the documentation index.
