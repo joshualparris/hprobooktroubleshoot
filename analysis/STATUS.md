@@ -42,7 +42,7 @@ The Windows System Power Report gives a useful anchor:
 - **14:56:16 local:** report generated;
 - **15:07:27–15:53:24 local:** later HWiNFO sensor capture remains continuous and does not contain a hard freeze.
 
-Do not treat a future-dated 2042 bugcheck record found in the power-report data as a current crash. It lies outside the report’s declared seven-day window and is now explicitly filtered by Windows Crash Doctor.
+Do not treat a future-dated 2042 bugcheck record found in the power-report data as a current crash. It lies outside the report’s declared seven-day window and is explicitly filtered by Windows Crash Doctor.
 
 ## What to capture now
 
@@ -84,13 +84,14 @@ Treat stability as progressively stronger evidence:
 - 24+ hours of representative use.
 
 A new freeze ends the current stage. Record:
+
 - exact/approximate time;
 - last visible screen and task;
 - whether the machine resumed recently;
 - AC/battery state;
 - attached devices;
 - the first post-reboot collector snapshot;
-- the HWiNFO CSV if logging was active.
+- the HWiNFO CSV or Crash Doctor sensor capture if logging was active.
 
 ## Next decision sequence
 
@@ -99,7 +100,7 @@ A new freeze ends the current stage. Record:
 3. Inspect XTU settings without changing values and record whether any offset/custom profile is active.
 4. With BitLocker recovery-key safety, reliable AC power and rollback planning in place, update the physical HP N92 BIOS using HP’s official method rather than relying on the failed Windows firmware device path.
 5. After the BIOS change, confirm both the physical BIOS version and the Firmware-class PnP device state, then run a fresh collector snapshot.
-6. Repeat representative use with HWiNFO logging. A clean run should again show whether heat/WHEA stay quiet and whether memory pressure remains extreme.
+6. Repeat representative use with sensor logging. A clean run should again show whether heat/WHEA stay quiet and whether memory pressure remains extreme.
 7. If instability persists, test memory properly and consider the practical 4 GB RAM limitation separately from the crash mechanism.
 8. If updated firmware + reliable dump capture + known-good RAM still freeze, isolate the supplied Windows image with a clean supported OS/live environment where practical.
 9. If low-level freezes survive firmware, RAM and clean-OS isolation, use the warranty/return path instead of indefinite software tweaking.
@@ -108,6 +109,8 @@ See [`TEST_PLAN.md`](TEST_PLAN.md) for the staged procedure.
 
 ## Tooling status
 
-Windows Crash Doctor now analyses its normal collector snapshot **plus optional HWiNFO sensor CSVs and Windows System Power Reports**. The telemetry layer detects sustained memory pressure, thermal/WHEA state, drive-health flags, sampling gaps, combined workload bursts and in-window abnormal shutdowns while excluding stale/future failure records.
+Windows Crash Doctor analyses its normal collector snapshot plus supported HWiNFO CSV, LibreHardwareMonitor JSONL and Windows System Power Report telemetry. The telemetry layer detects only signals actually present in the provider data and keeps negative evidence time-bounded.
 
-The broader product roadmap — dump symbols, ETW, proactive capture, WER ingestion, incident history and 100 concrete upgrades — remains in [`../docs/ROADMAP_100.md`](../docs/ROADMAP_100.md).
+The desktop product now also has preflight, a diagnostic registry, SQLite diagnostic-run history, evidence/finding fingerprints, previous comparable-run comparison and privacy-reviewed export. Those product capabilities do not change the ProBook case conclusions above.
+
+The broader roadmap still includes symbolized/deeper dump analysis, ETW/WPR, proactive process/hang capture, WER ingestion, a full crash/incident catalogue with lifecycle/deduplication/retention and other benchmark-derived upgrades. The current SQLite **run ledger** should not be confused with that future always-on incident catalogue. See [`../docs/ROADMAP_100.md`](../docs/ROADMAP_100.md).
