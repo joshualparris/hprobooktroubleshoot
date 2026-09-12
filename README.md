@@ -50,7 +50,7 @@ For a one-click install that creates a Desktop shortcut, download and double-cli
 - native WPF desktop GUI and automated EXE release pipeline;
 - documented HP ProBook evidence and controlled test plan.
 
-The remaining gaps are tracked individually in the **[100-item Windows Crash Doctor roadmap](docs/ROADMAP_100.md)**.
+The remaining gaps are tracked individually in the **[100-item Windows Crash Doctor roadmap](docs/ROADMAP_100.md)**. Cross-repository engineering upgrades identified from Josh's other GitHub projects are tracked separately in the **[GitHub Borrow Roadmap](docs/GITHUB_BORROW_ROADMAP.md)**.
 
 ## Command-line one-click install
 
@@ -126,6 +126,7 @@ It does **not** silently flash firmware, remove drivers, disable security, chang
 | [`windows-crash-doctor/README.md`](windows-crash-doctor/README.md) | Crash Doctor engine usage and behaviour |
 | [`docs/OPEN_SOURCE_INTEGRATIONS.md`](docs/OPEN_SOURCE_INTEGRATIONS.md) | Open-source provider architecture |
 | [`docs/WINDOWS_CRASH_DOCTOR_PLAN.md`](docs/WINDOWS_CRASH_DOCTOR_PLAN.md) | Product architecture and design |
+| [`docs/GITHUB_BORROW_ROADMAP.md`](docs/GITHUB_BORROW_ROADMAP.md) | Adapt reusable diagnostics/reliability/security patterns from Josh's other repositories |
 | [`docs/COMPARABLE_TOOLS_RESEARCH.md`](docs/COMPARABLE_TOOLS_RESEARCH.md) | Comparator-tool research |
 | [`docs/ROADMAP_100.md`](docs/ROADMAP_100.md) | Canonical 100-item upgrade backlog |
 | [`analysis/STATUS.md`](analysis/STATUS.md) | Current ProBook operational status |
