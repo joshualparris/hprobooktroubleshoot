@@ -119,8 +119,15 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+          $errorPath = Join-Path $env:TEMP 'WindowsCrashDoctor-selftest-error.txt'
+          Remove-Item -LiteralPath $errorPath -Force -ErrorAction SilentlyContinue
           $process = Start-Process -FilePath .\dist\win-x64\WindowsCrashDoctor.exe -ArgumentList '--self-test' -PassThru -Wait
           if ($process.ExitCode -ne 0) {
+            if (Test-Path -LiteralPath $errorPath -PathType Leaf) {
+              Write-Host '--- WindowsCrashDoctor.exe self-test diagnostic ---'
+              Get-Content -LiteralPath $errorPath -Raw | Write-Host
+              Write-Host '--- end self-test diagnostic ---'
+            }
             throw "Packaged WindowsCrashDoctor.exe self-test failed with exit code $($process.ExitCode)."
           }
 
