@@ -120,15 +120,33 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $errorPath = Join-Path $env:TEMP 'WindowsCrashDoctor-selftest-error.txt'
-          Remove-Item -LiteralPath $errorPath -Force -ErrorAction SilentlyContinue
-          $process = Start-Process -FilePath .\dist\win-x64\WindowsCrashDoctor.exe -ArgumentList '--self-test' -PassThru -Wait
+          $progressPath = Join-Path $env:TEMP 'WindowsCrashDoctor-selftest-progress.txt'
+          Remove-Item -LiteralPath $errorPath, $progressPath -Force -ErrorAction SilentlyContinue
+          $process = Start-Process -FilePath .\dist\win-x64\WindowsCrashDoctor.exe -ArgumentList '--self-test' -PassThru
+          if (-not $process.WaitForExit(120000)) {
+            Write-Host '--- WindowsCrashDoctor.exe self-test timeout ---'
+            if (Test-Path -LiteralPath $progressPath -PathType Leaf) {
+              Write-Host 'Last self-test stage:'
+              Get-Content -LiteralPath $progressPath -Raw | Write-Host
+            }
+            & taskkill.exe /PID $process.Id /T /F | Out-Null
+            throw 'Packaged WindowsCrashDoctor.exe self-test exceeded the 120-second watchdog.'
+          }
           if ($process.ExitCode -ne 0) {
+            if (Test-Path -LiteralPath $progressPath -PathType Leaf) {
+              Write-Host 'Last self-test stage:'
+              Get-Content -LiteralPath $progressPath -Raw | Write-Host
+            }
             if (Test-Path -LiteralPath $errorPath -PathType Leaf) {
               Write-Host '--- WindowsCrashDoctor.exe self-test diagnostic ---'
               Get-Content -LiteralPath $errorPath -Raw | Write-Host
               Write-Host '--- end self-test diagnostic ---'
             }
             throw "Packaged WindowsCrashDoctor.exe self-test failed with exit code $($process.ExitCode)."
+          }
+          if (Test-Path -LiteralPath $progressPath -PathType Leaf) {
+            $finalStage = Get-Content -LiteralPath $progressPath -Raw
+            if ($finalStage -notmatch '\bcomplete\s*$') { throw "Packaged self-test exited without the complete stage: $finalStage" }
           }
 
       - name: Build verified release bundle and manifest
