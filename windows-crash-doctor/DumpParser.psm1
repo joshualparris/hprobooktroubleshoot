@@ -280,7 +280,7 @@ function Read-CrashDoctorMiniDump {
 
     $systemInfo = if ($byType.ContainsKey(7)) { Read-CrashDoctorMiniDumpSystemInfo -Stream $Stream -Directory $byType[7] } else { $null }
     $exception = if ($byType.ContainsKey(6)) { Read-CrashDoctorMiniDumpException -Stream $Stream -Directory $byType[6] } else { $null }
-    $modules = if ($byType.ContainsKey(4)) { Read-CrashDoctorMiniDumpModules -Stream $Stream -Directory $byType[4] } else { @() }
+    $modules = if ($byType.ContainsKey(4)) { @(Read-CrashDoctorMiniDumpModules -Stream $Stream -Directory $byType[4]) } else { @() }
     $threadCount = if ($byType.ContainsKey(3)) { Read-CrashDoctorMiniDumpCountStream -Stream $Stream -Directory $byType[3] } else { $null }
     $memoryRangeCount = if ($byType.ContainsKey(5)) { Read-CrashDoctorMiniDumpCountStream -Stream $Stream -Directory $byType[5] } else { $null }
     $memory64 = if ($byType.ContainsKey(9)) { Read-CrashDoctorMiniDumpMemory64Summary -Stream $Stream -Directory $byType[9] } else { $null }
@@ -303,8 +303,8 @@ function Read-CrashDoctorMiniDump {
         }
         SystemInfo = $systemInfo
         Exception = $exception
-        ModuleCount = $modules.Count
-        Modules = $modules
+        ModuleCount = @($modules).Count
+        Modules = @($modules)
         ThreadCount = $threadCount
         MemoryRangeCount = $memoryRangeCount
         Memory64 = $memory64
