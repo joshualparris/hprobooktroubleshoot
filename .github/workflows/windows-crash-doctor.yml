@@ -5,11 +5,13 @@ on:
     paths:
       - 'windows-crash-doctor/**'
       - 'scripts/collect-diagnostics.ps1'
+      - 'scripts/package-windows-crash-doctor.ps1'
       - '.github/workflows/windows-crash-doctor.yml'
   pull_request:
     paths:
       - 'windows-crash-doctor/**'
       - 'scripts/collect-diagnostics.ps1'
+      - 'scripts/package-windows-crash-doctor.ps1'
       - '.github/workflows/windows-crash-doctor.yml'
 
 jobs:
@@ -20,3 +22,13 @@ jobs:
       - name: Run Windows Crash Doctor self-test
         shell: powershell
         run: .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
+      - name: Build installable ZIP
+        shell: powershell
+        run: .\scripts\package-windows-crash-doctor.ps1 -OutputDirectory .\dist
+      - name: Upload Windows Crash Doctor package
+        uses: actions/upload-artifact@v4
+        with:
+          name: WindowsCrashDoctor
+          path: |
+            dist/WindowsCrashDoctor-*.zip
+            dist/WindowsCrashDoctor-*.sha256
