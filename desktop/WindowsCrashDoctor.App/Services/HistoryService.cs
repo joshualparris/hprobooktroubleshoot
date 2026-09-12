@@ -1,4 +1,6 @@
 using Microsoft.Data.Sqlite;
+using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using WindowsCrashDoctor.Models;
 
@@ -6,24 +8,40 @@ namespace WindowsCrashDoctor.Services;
 
 public sealed class HistoryService
 {
+    private const int CurrentDatabaseSchemaVersion = 1;
+    private const long MaxSettingsBytes = 1024 * 1024;
+
     private readonly string _root;
     private readonly string _legacyHistoryPath;
     private readonly string _settingsPath;
     private readonly string _databasePath;
-    private readonly JsonSerializerOptions _json = new() { WriteIndented = true };
+    private readonly JsonSerializerOptions _json = new() { WriteIndented = true, PropertyNameCaseInsensitive = true };
+    private bool _databaseReady;
 
     public string? StartupWarning { get; private set; }
     public string DatabasePath => _databasePath;
 
-    public HistoryService()
+    public HistoryService(string? rootPath = null)
     {
-        _root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WindowsCrashDoctor");
+        _root = string.IsNullOrWhiteSpace(rootPath)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WindowsCrashDoctor")
+            : Path.GetFullPath(rootPath);
         Directory.CreateDirectory(_root);
         _legacyHistoryPath = Path.Combine(_root, "history.json");
         _settingsPath = Path.Combine(_root, "settings.json");
         _databasePath = Path.Combine(_root, "history.db");
-        EnsureDatabase();
-        TryMigrateLegacyHistory();
+
+        try
+        {
+            EnsureDatabase();
+            _databaseReady = true;
+            TryMigrateLegacyHistory();
+        }
+        catch (Exception ex)
+        {
+            _databaseReady = false;
+            AddStartupWarning("Run history is unavailable: " + ex.Message);
+        }
     }
 
     private string ConnectionString => new SqliteConnectionStringBuilder
@@ -35,86 +53,119 @@ public sealed class HistoryService
 
     private void EnsureDatabase()
     {
-        using var connection = Open();
+        using var connection = OpenUnchecked();
+        using (var pragma = connection.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;";
+            pragma.ExecuteNonQuery();
+        }
+
+        var schemaVersion = ReadDatabaseSchemaVersion(connection);
+        if (schemaVersion > CurrentDatabaseSchemaVersion)
+            throw new InvalidDataException($"History database schema {schemaVersion} is newer than this app supports ({CurrentDatabaseSchemaVersion}).");
+
+        if (schemaVersion == 0)
+        {
+            using var transaction = connection.BeginTransaction();
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                CREATE TABLE IF NOT EXISTS runs (
+                    run_id TEXT PRIMARY KEY,
+                    ran_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    health_label TEXT NOT NULL,
+                    evidence_path TEXT NOT NULL,
+                    report_path TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    device_fingerprint TEXT NOT NULL,
+                    evidence_bundle_hash TEXT NOT NULL,
+                    product_version TEXT NOT NULL,
+                    rule_set_version TEXT NOT NULL,
+                    duration_ms INTEGER NOT NULL,
+                    high_count INTEGER NOT NULL,
+                    medium_count INTEGER NOT NULL,
+                    finding_count INTEGER NOT NULL,
+                    coverage_percent REAL NOT NULL,
+                    collector_success_count INTEGER NOT NULL,
+                    collector_failure_count INTEGER NOT NULL,
+                    comparison_summary TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS findings (
+                    run_id TEXT NOT NULL,
+                    finding_id TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    confidence TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    evidence TEXT NOT NULL,
+                    source_collector TEXT NOT NULL,
+                    rule_version TEXT NOT NULL,
+                    PRIMARY KEY (run_id, finding_id),
+                    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS collector_executions (
+                    run_id TEXT NOT NULL,
+                    diagnostic_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    evidence_file TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    started_at TEXT,
+                    finished_at TEXT,
+                    duration_ms INTEGER NOT NULL,
+                    exit_code INTEGER,
+                    retry_count INTEGER NOT NULL,
+                    failure_reason TEXT,
+                    PRIMARY KEY (run_id, diagnostic_id),
+                    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS run_comparisons (
+                    run_id TEXT NOT NULL,
+                    finding_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    previous_fingerprint TEXT,
+                    current_fingerprint TEXT,
+                    explanation TEXT,
+                    PRIMARY KEY (run_id, finding_id, state),
+                    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS ix_runs_device_time ON runs(device_fingerprint, ran_at DESC);
+                PRAGMA user_version = 1;
+                """;
+            command.ExecuteNonQuery();
+            transaction.Commit();
+            schemaVersion = ReadDatabaseSchemaVersion(connection);
+        }
+
+        if (schemaVersion != CurrentDatabaseSchemaVersion)
+            throw new InvalidDataException($"History database schema initialisation ended at {schemaVersion}, expected {CurrentDatabaseSchemaVersion}.");
+    }
+
+    private static int ReadDatabaseSchemaVersion(SqliteConnection connection)
+    {
         using var command = connection.CreateCommand();
-        command.CommandText = """
-            PRAGMA journal_mode=WAL;
-            PRAGMA foreign_keys=ON;
-            CREATE TABLE IF NOT EXISTS runs (
-                run_id TEXT PRIMARY KEY,
-                ran_at TEXT NOT NULL,
-                status TEXT NOT NULL,
-                health_label TEXT NOT NULL,
-                evidence_path TEXT NOT NULL,
-                report_path TEXT NOT NULL,
-                model TEXT NOT NULL,
-                device_fingerprint TEXT NOT NULL,
-                evidence_bundle_hash TEXT NOT NULL,
-                product_version TEXT NOT NULL,
-                rule_set_version TEXT NOT NULL,
-                duration_ms INTEGER NOT NULL,
-                high_count INTEGER NOT NULL,
-                medium_count INTEGER NOT NULL,
-                finding_count INTEGER NOT NULL,
-                coverage_percent REAL NOT NULL,
-                collector_success_count INTEGER NOT NULL,
-                collector_failure_count INTEGER NOT NULL,
-                comparison_summary TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS findings (
-                run_id TEXT NOT NULL,
-                finding_id TEXT NOT NULL,
-                fingerprint TEXT NOT NULL,
-                severity TEXT NOT NULL,
-                confidence TEXT NOT NULL,
-                title TEXT NOT NULL,
-                evidence TEXT NOT NULL,
-                source_collector TEXT NOT NULL,
-                rule_version TEXT NOT NULL,
-                PRIMARY KEY (run_id, finding_id),
-                FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
-            );
-            CREATE TABLE IF NOT EXISTS collector_executions (
-                run_id TEXT NOT NULL,
-                diagnostic_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                evidence_file TEXT NOT NULL,
-                status TEXT NOT NULL,
-                started_at TEXT,
-                finished_at TEXT,
-                duration_ms INTEGER NOT NULL,
-                exit_code INTEGER,
-                retry_count INTEGER NOT NULL,
-                failure_reason TEXT,
-                PRIMARY KEY (run_id, diagnostic_id),
-                FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
-            );
-            CREATE TABLE IF NOT EXISTS run_comparisons (
-                run_id TEXT NOT NULL,
-                finding_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                state TEXT NOT NULL,
-                previous_fingerprint TEXT,
-                current_fingerprint TEXT,
-                explanation TEXT,
-                PRIMARY KEY (run_id, finding_id, state),
-                FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
-            );
-            CREATE INDEX IF NOT EXISTS ix_runs_device_time ON runs(device_fingerprint, ran_at DESC);
-            """;
-        command.ExecuteNonQuery();
+        command.CommandText = "PRAGMA user_version;";
+        return Convert.ToInt32(command.ExecuteScalar());
     }
 
     public bool CheckHealth(out string detail)
     {
+        if (!_databaseReady)
+        {
+            detail = StartupWarning ?? "SQLite run ledger is unavailable.";
+            return false;
+        }
+
         try
         {
             using var connection = Open();
             using var command = connection.CreateCommand();
             command.CommandText = "SELECT COUNT(*) FROM runs;";
             var count = Convert.ToInt32(command.ExecuteScalar());
-            detail = $"SQLite run ledger ready ({count} recorded run(s)).";
-            return true;
+            var schemaVersion = ReadDatabaseSchemaVersion(connection);
+            detail = $"SQLite run ledger ready (schema {schemaVersion}; {count} recorded run(s)).";
+            return schemaVersion == CurrentDatabaseSchemaVersion;
         }
         catch (Exception ex)
         {
@@ -167,6 +218,8 @@ public sealed class HistoryService
 
     public void AddHistory(DiagnosticRunHistory item)
     {
+        ArgumentNullException.ThrowIfNull(item);
+        ValidateHistoryItem(item);
         if (string.IsNullOrWhiteSpace(item.RunId)) item.RunId = Guid.NewGuid().ToString("N");
         using var connection = Open();
         using var transaction = connection.BeginTransaction();
@@ -200,6 +253,17 @@ public sealed class HistoryService
 
         ReplaceChildren(connection, transaction, item);
         transaction.Commit();
+    }
+
+    private static void ValidateHistoryItem(DiagnosticRunHistory item)
+    {
+        if (item.CoveragePercent is < 0 or > 100 || double.IsNaN(item.CoveragePercent) || double.IsInfinity(item.CoveragePercent))
+            throw new InvalidDataException("History coverage percent is outside valid bounds.");
+        if (item.DurationMs < 0 || item.HighCount < 0 || item.MediumCount < 0 || item.FindingCount < 0 ||
+            item.CollectorSuccessCount < 0 || item.CollectorFailureCount < 0)
+            throw new InvalidDataException("History contains a negative counter or duration.");
+        if (string.IsNullOrWhiteSpace(item.EvidencePath) || string.IsNullOrWhiteSpace(item.ReportPath))
+            throw new InvalidDataException("History run is missing its evidence or report path.");
     }
 
     private static void ReplaceChildren(SqliteConnection connection, SqliteTransaction transaction, DiagnosticRunHistory item)
@@ -278,26 +342,123 @@ public sealed class HistoryService
         }
         catch (Exception ex)
         {
-            StartupWarning = "Legacy history could not be migrated; it was left untouched. " + ex.Message;
+            AddStartupWarning("Legacy history could not be migrated; it was left untouched. " + ex.Message);
         }
     }
 
     public AppSettings LoadSettings()
     {
+        if (!File.Exists(_settingsPath)) return new AppSettings();
         try
         {
-            if (!File.Exists(_settingsPath)) return new();
-            return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_settingsPath), _json) ?? new();
+            var info = new FileInfo(_settingsPath);
+            if (info.Length <= 0 || info.Length > MaxSettingsBytes)
+                throw new InvalidDataException("Settings file size is invalid.");
+
+            var text = File.ReadAllText(_settingsPath);
+            using var parsed = JsonDocument.Parse(text);
+            AppSettings settings;
+            if (parsed.RootElement.TryGetProperty("schemaVersion", out _))
+            {
+                var document = JsonSerializer.Deserialize<SettingsDocument>(text, _json)
+                    ?? throw new InvalidDataException("Settings document is empty.");
+                if (!string.Equals(document.SchemaVersion, SettingsDocument.CurrentSchemaVersion, StringComparison.Ordinal))
+                    throw new InvalidDataException($"Unsupported settings schema '{document.SchemaVersion}'.");
+                settings = document.Settings ?? throw new InvalidDataException("Settings document has no settings object.");
+            }
+            else
+            {
+                // Legacy 0.x builds stored AppSettings directly; migrate once to the versioned envelope.
+                settings = JsonSerializer.Deserialize<AppSettings>(text, _json)
+                    ?? throw new InvalidDataException("Legacy settings document is empty.");
+                ValidateSettings(settings);
+                SaveSettings(settings);
+            }
+
+            ValidateSettings(settings);
+            return settings;
         }
         catch (Exception ex)
         {
-            StartupWarning = string.IsNullOrWhiteSpace(StartupWarning) ? "Settings could not be read: " + ex.Message : StartupWarning;
-            return new();
+            AddStartupWarning("Settings could not be read; defaults are being used and the original file was left untouched. " + ex.Message);
+            return new AppSettings();
         }
     }
 
-    public void SaveSettings(AppSettings settings) => File.WriteAllText(_settingsPath, JsonSerializer.Serialize(settings, _json));
+    public void SaveSettings(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        ValidateSettings(settings);
+        var document = new SettingsDocument { Settings = settings };
+        WriteJsonAtomically(_settingsPath, JsonSerializer.Serialize(document, _json));
+    }
 
-    private SqliteConnection Open() { var connection = new SqliteConnection(ConnectionString); connection.Open(); return connection; }
-    private static void Add(SqliteCommand command, string name, object? value) => command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+    private static void ValidateSettings(AppSettings settings)
+    {
+        if (settings.LastEvidencePath is { Length: > 32767 })
+            throw new InvalidDataException("Settings LastEvidencePath is too long.");
+        if (!string.IsNullOrWhiteSpace(settings.LastEvidencePath) && settings.LastEvidencePath.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
+            throw new InvalidDataException("Settings LastEvidencePath contains invalid path characters.");
+    }
+
+    private static void WriteJsonAtomically(string path, string json)
+    {
+        var directory = Path.GetDirectoryName(path) ?? throw new InvalidOperationException("Settings directory could not be resolved.");
+        Directory.CreateDirectory(directory);
+        var tempPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+            {
+                writer.Write(json);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+
+            if (File.Exists(path))
+                File.Move(tempPath, path, overwrite: true);
+            else
+                File.Move(tempPath, path);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath)) File.Delete(tempPath);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"Settings temporary-file cleanup failed: {ex.Message}");
+            }
+        }
+    }
+
+    private SqliteConnection Open()
+    {
+        if (!_databaseReady)
+            throw new InvalidOperationException(StartupWarning ?? "SQLite run ledger is unavailable.");
+        return OpenUnchecked();
+    }
+
+    private SqliteConnection OpenUnchecked()
+    {
+        var connection = new SqliteConnection(ConnectionString);
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA foreign_keys=ON;";
+        command.ExecuteNonQuery();
+        return connection;
+    }
+
+    private void AddStartupWarning(string warning)
+    {
+        if (string.IsNullOrWhiteSpace(StartupWarning))
+            StartupWarning = warning;
+        else if (!StartupWarning.Contains(warning, StringComparison.Ordinal))
+            StartupWarning += " " + warning;
+    }
+
+    private static void Add(SqliteCommand command, string name, object? value) =>
+        command.Parameters.AddWithValue(name, value ?? DBNull.Value);
 }
