@@ -207,7 +207,7 @@ function Read-CrashDoctorMiniDumpModules {
             Name = $name
         })
     }
-    return @($modules)
+    return $modules.ToArray()
 }
 
 function Read-CrashDoctorMiniDumpCountStream {
@@ -303,13 +303,13 @@ function Read-CrashDoctorMiniDump {
         }
         SystemInfo = $systemInfo
         Exception = $exception
-        ModuleCount = @($modules).Count
-        Modules = @($modules)
+        ModuleCount = $modules.Count
+        Modules = $modules
         ThreadCount = $threadCount
         MemoryRangeCount = $memoryRangeCount
         Memory64 = $memory64
         MemoryInfo = $memoryInfo
-        Streams = @($directories)
+        Streams = $directories.ToArray()
         ParseCoverage = 'Header, stream directory, system info, exception, modules, thread count and memory summaries'
     }
 }
@@ -414,7 +414,7 @@ function Get-CrashDoctorDumpInfo {
     }
 
     $resolved = (Resolve-Path -LiteralPath $Path).Path
-    $stream = New-Object System.IO.FileStream(
+    $stream = [System.IO.File]::Open(
         $resolved,
         [System.IO.FileMode]::Open,
         [System.IO.FileAccess]::Read,
