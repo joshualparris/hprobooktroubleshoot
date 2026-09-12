@@ -5,8 +5,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $crashDoctorRoot = Split-Path -Parent $PSScriptRoot
-$modulePath = Join-Path $crashDoctorRoot 'TelemetryAnalysis.psm1'
-Import-Module $modulePath -Force
+Import-Module (Join-Path $crashDoctorRoot 'TelemetryAnalysis.psm1') -Force
+Import-Module (Join-Path $crashDoctorRoot 'Reporting.psm1') -Force
 
 function Assert-True {
     param(
@@ -16,11 +16,11 @@ function Assert-True {
     if (-not $Condition) { throw "ASSERTION FAILED: $Message" }
 }
 
-$temp = Join-Path ([System.IO.Path]::GetTempPath()) ("CrashDoctorTelemetryTest-" + [guid]::NewGuid().ToString('N'))
+$temp = Join-Path ([IO.Path]::GetTempPath()) ('CrashDoctorTelemetryTest-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp -Force | Out-Null
 
 try {
-    # Deliberately includes a duplicate CPU Package header because HWiNFO does this in real exports.
+    # Real HWiNFO exports can repeat display names, so duplicate headers are an explicit parser invariant.
     @'
 Date,Time,"Physical Memory Available [MB]","Physical Memory Load [%]","Virtual Memory Load [%]","Page File Total [MB]","Page File Used [MB]","Total CPU Usage [%]","CPU Package [°C]","CPU Package [°C]","Core Thermal Throttling (avg) [Yes/No]","Total Errors []","Drive Remaining Life [%]","Drive Failure [Yes/No]","Drive Warning [Yes/No]","Total Activity [%]","GT Limit Reasons (avg) [Yes/No]","GT: Fuses limit [Yes/No]","Ring Limit Reasons (avg) [Yes/No]","RING: Max VR Voltage  ICCmax  PL4 [Yes/No]"
 12.9.2026,15:16:14.000,360,91,82,2636,650,42,48,48,No,0,86,No,No,12,No,No,No,No
@@ -37,6 +37,7 @@ var OtherData = {};
 
     $telemetry = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $temp
     Assert-True $telemetry.Available 'Telemetry analysis reported unavailable.'
+    Assert-True (@($telemetry.Errors).Count -eq 0) 'Valid telemetry fixture produced a source error.'
 
     $ids = @($telemetry.Findings | ForEach-Object { $_.Id })
     foreach ($expected in @(
@@ -61,14 +62,23 @@ var OtherData = {};
     Assert-True ($telemetry.Sensor.Summary.ThermalThrottleSampleCount -eq 0) 'Quiet thermal fixture reported throttling.'
     Assert-True ($telemetry.Sensor.Summary.WheaTotalErrorsMax -eq 0) 'Quiet WHEA fixture reported an error.'
 
-    $report = [pscustomobject][ordered]@{ Findings = @() }
+    $report = [pscustomobject][ordered]@{ SchemaVersion = '1.0'; Findings = @() }
     $merged = Add-CrashDoctorTelemetryToReport -Report $report -Telemetry $telemetry
     Assert-True (@($merged.Findings).Count -eq @($telemetry.Findings).Count) 'Telemetry findings did not merge into the core report.'
-    Assert-True ($null -ne $merged.Telemetry.Sensor) 'Telemetry summary was not attached to the core report.'
+    Assert-True ($null -ne $merged.Telemetry.Sensor) 'Telemetry summary was not attached to the merged report.'
+    Assert-True ($null -eq $report.PSObject.Properties['Telemetry']) 'Telemetry merge mutated the original report object.'
 
     $markdown = ConvertTo-CrashDoctorTelemetryMarkdownSection -Telemetry $telemetry
     Assert-True ($markdown -match 'Telemetry summary') 'Telemetry Markdown section is missing.'
     Assert-True ($markdown -match 'In-window abnormal shutdowns') 'Power-report summary is missing from Markdown.'
+
+    # A malformed external telemetry source must be observable while unrelated sources continue to work.
+    'Date,Time`n12.9.2026' | Set-Content -LiteralPath (Join-Path $temp 'sensors-bad.csv') -Encoding Default
+    (Get-Item -LiteralPath (Join-Path $temp 'sensors-bad.csv')).LastWriteTime = (Get-Date).AddSeconds(10)
+    $degraded = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $temp
+    Assert-True $degraded.Power.Available 'A malformed sensor source disabled valid power telemetry.'
+    Assert-True (-not $degraded.Sensor.Available) 'Malformed sensor telemetry was treated as valid.'
+    Assert-True (@($degraded.Errors | Where-Object Source -eq 'sensor').Count -eq 1) 'Malformed sensor telemetry was not surfaced as a structured source error.'
 
     Write-Host 'Windows Crash Doctor telemetry self-test: PASS'
 }
