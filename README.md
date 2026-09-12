@@ -37,6 +37,21 @@ That is deliberately broader than saying “the failed firmware capsule is the r
 
 See [`analysis/MASTER_ANALYSIS.md`](analysis/MASTER_ANALYSIS.md) for the detailed reasoning and [`analysis/STATUS.md`](analysis/STATUS.md) for the short operational view.
 
+## Working diagnostic engine
+
+The repository now includes **Windows Crash Doctor**, a read-only PowerShell rule engine that analyses a collector snapshot and produces both Markdown and JSON reports.
+
+```powershell
+.\windows-crash-doctor\Invoke-CrashDoctor.ps1 `
+  -EvidencePath "$env:USERPROFILE\Desktop\HPProBook-YYYYMMDD-HHMMSS"
+```
+
+It currently detects the evidence patterns that matter most in this case — firmware Code 10, current firmware-resource state, Sysprep/reused-image history, XTU/Conexant presence, dump-capture risk, storage counters, BitLocker conversion context, WHEA, Event 41 and volmgr 161 — while keeping **evidence**, **interpretation**, **confidence** and **next step** separate.
+
+See [`windows-crash-doctor/README.md`](windows-crash-doctor/README.md) and [`docs/WINDOWS_CRASH_DOCTOR_PLAN.md`](docs/WINDOWS_CRASH_DOCTOR_PLAN.md).
+
+A repository-wide CI guard also blocks accidental commits containing a BitLocker-style 48-digit recovery password.
+
 ## Current test sequence
 
 1. Capture current post-change state.
@@ -58,7 +73,7 @@ Run from an elevated PowerShell prompt for the most complete snapshot:
 .\scripts\collect-diagnostics.ps1
 ```
 
-The collector writes a timestamped folder on the Desktop by default with hardware, firmware, problem-device, storage, pagefile/dump, BitLocker, power-state, SetupAPI, battery/system-power reports and recent Windows event evidence. It does not deliberately change machine settings.
+The collector writes a timestamped folder on the Desktop by default with hardware, OS/boot time, firmware, problem-device, storage, pagefile/dump, BitLocker, power-state, driver, SetupAPI, battery/system-power reports and recent Windows event evidence. It does not deliberately change machine settings.
 
 To hash a private evidence folder and identify duplicates:
 
@@ -97,8 +112,17 @@ raw/
   battery-report.html.gz   small directly committed raw-report sample
 
 scripts/
-  collect-diagnostics.ps1  consolidated repeatable diagnostic snapshot
-  hash-evidence.ps1        SHA-256 manifest + duplicate detection
+  collect-diagnostics.ps1     consolidated repeatable diagnostic snapshot
+  hash-evidence.ps1           SHA-256 manifest + duplicate detection
+  check-public-evidence.ps1   narrow public-repo secret guard
+
+windows-crash-doctor/
+  CrashDoctor.psm1            evidence parser + rule engine
+  Invoke-CrashDoctor.ps1      CLI/report writer
+  tests/self-test.ps1         synthetic regression/self-test
+
+docs/
+  WINDOWS_CRASH_DOCTOR_PLAN.md architecture, rule contract and roadmap
 
 SECURITY_NOTICE.md          public-repository privacy/redaction rules
 ```
