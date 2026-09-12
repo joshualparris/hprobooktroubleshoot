@@ -20,6 +20,7 @@ evidence/
 ## Chain of custody
 
 For every important raw artefact, aim to preserve:
+
 - original filename;
 - byte size;
 - SHA-256;
@@ -58,16 +59,29 @@ The distinction is essential on a reused Windows installation.
 `crash-doctor-report.md` and `crash-doctor-report.json` are **derived analysis artefacts**. They are reproducible from the named input folder and should not replace the originals.
 
 If a finding matters:
+
 1. preserve the original collector folder;
 2. record its hash/manifest where practical;
 3. retain the report that was produced from it;
 4. do not edit the source evidence to make the report cleaner.
 
-## Future incident-store model
+The current desktop workflow also calculates an evidence-bundle SHA-256 fingerprint and persists run/finding provenance in the local SQLite diagnostic run ledger. Those records improve comparison/auditability but still do not replace the source evidence itself.
 
-The 100-item roadmap adds dumps, WER, ETW, trigger captures and a persistent incident catalogue. Those sources should enter the same provenance model rather than inventing parallel evidence stores.
+## Shareable export
+
+The current desktop app includes a privacy-reviewed shareable-export path. It plans the bundle before writing the ZIP, excludes high-risk/unscannable artefacts by default, redacts supported sensitive text patterns in derivatives and writes `export-manifest.json`. Original evidence remains unchanged.
+
+This is a conservative safety layer, not proof that an export is free of every possible secret or personal identifier. A human review is still appropriate before external publication.
+
+## Current run ledger versus future incident store
+
+Windows Crash Doctor now has a local SQLite **diagnostic run ledger** containing runs, findings, collector outcomes and run comparisons. This supports durable history and before/after analysis.
+
+The larger roadmap still calls for a broader **crash/incident catalogue** covering always-on detection, WER/ETW/trigger captures, lifecycle state, deduplication, retention and richer incident relationships. Do not describe that broader incident-store architecture as complete merely because the diagnostic run ledger exists.
 
 See:
+
+- [`../docs/RELEASE_VERIFICATION.md`](../docs/RELEASE_VERIFICATION.md)
 - [`../docs/WINDOWS_CRASH_DOCTOR_PLAN.md`](../docs/WINDOWS_CRASH_DOCTOR_PLAN.md)
 - [`../docs/ROADMAP_100.md`](../docs/ROADMAP_100.md)
 
