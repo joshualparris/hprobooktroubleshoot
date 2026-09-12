@@ -60,14 +60,15 @@ jobs:
             exit 1
           }
 
-      - name: Install PowerShell QA modules
+      - name: Verify open-source QA modules
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $ProgressPreference = 'SilentlyContinue'
-          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck -Confirm:$false
-          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -Confirm:$false
+          $pester = Get-Module -ListAvailable Pester | Where-Object Version -ge ([version]'5.5.0') | Sort-Object Version -Descending | Select-Object -First 1
+          $analyzer = Get-Module -ListAvailable PSScriptAnalyzer | Sort-Object Version -Descending | Select-Object -First 1
+          if (-not $pester) { throw 'Pester 5.5+ is required by this workflow.' }
+          if (-not $analyzer) { throw 'PSScriptAnalyzer is required by this workflow.' }
+          Write-Host "Pester $($pester.Version)"
+          Write-Host "PSScriptAnalyzer $($analyzer.Version)"
 
       - name: Run PSScriptAnalyzer errors gate
         shell: pwsh
