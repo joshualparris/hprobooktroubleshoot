@@ -1,8 +1,10 @@
 # Windows Crash Doctor
 
-A small, dependency-free PowerShell diagnostic engine for evidence collected by this repository.
+A small PowerShell diagnostic engine for evidence collected by this repository.
 
 It is intentionally **evidence-first**: it reports what the supplied logs support, distinguishes current-machine state from inherited history, and avoids turning correlations into root-cause claims.
+
+The core snapshot analyser remains dependency-free. Optional open-source providers can now add deeper sensor, SMART, EVTX, timeline and inventory evidence without copying third-party source or binaries into this repository.
 
 ## Quick start
 
@@ -32,9 +34,45 @@ To keep the report elsewhere:
   -OutputDirectory C:\Evidence\Reports
 ```
 
-## What it currently detects
+## Optional open-source providers
 
-The first rule set covers the evidence patterns that mattered in this investigation:
+See what Crash Doctor knows about and what is installed:
+
+```powershell
+.\windows-crash-doctor\Manage-Integrations.ps1 -Action status
+```
+
+The high-value providers currently wired into the app are:
+
+- **LibreHardwareMonitor** — live temperatures, clocks, loads, voltages and other available sensors;
+- **smartmontools** — deep `smartctl` storage evidence when already installed;
+- **evtx / evtx_dump** — raw EVTX to ordered JSONL/XML conversion;
+- **Hayabusa** — opt-in Windows event forensics timeline;
+- **osquery** — structured read-only system, driver, service and software inventory;
+- **PerfView** — verified download/status support for later manual ETW tracing;
+- **Pester** and **PSScriptAnalyzer** — CI regression/static-analysis gates.
+
+Crash Doctor downloads selected official release assets only after an explicit `-Action install`. If GitHub publishes a SHA-256 digest for the release asset it must match before the tool is activated. Third-party binaries stay outside Git under `%LOCALAPPDATA%\WindowsCrashDoctor\Tools` by default.
+
+Example:
+
+```powershell
+# Hardware sensor provider
+.\windows-crash-doctor\Manage-Integrations.ps1 -Action install -Id librehardwaremonitor
+.\windows-crash-doctor\Manage-Integrations.ps1 -Action sensors `
+  -DurationMinutes 30 -IntervalSeconds 2 -OutputPath .\sensor-run.jsonl
+
+# Fast EVTX parser
+.\windows-crash-doctor\Manage-Integrations.ps1 -Action install -Id evtx
+.\windows-crash-doctor\Manage-Integrations.ps1 -Action evtx `
+  -Path .\System.evtx -OutputPath .\System.evtx.jsonl
+```
+
+The complete reviewed list, licence/risk decisions and commands are documented in [`../docs/OPEN_SOURCE_INTEGRATIONS.md`](../docs/OPEN_SOURCE_INTEGRATIONS.md).
+
+## What the snapshot engine currently detects
+
+The core rule set covers the evidence patterns that mattered in this investigation:
 
 - firmware-class Code 10 / `CM_PROB_FAILED_START`;
 - current Firmware-class `Status: OK` as useful post-change baseline evidence;
@@ -59,27 +97,30 @@ This repository is investigating intermittent hard hangs. Changing several varia
 
 Remediation should remain a separate, explicit action after the evidence has been preserved.
 
+The same rule applies to optional integrations: downloading a provider is separate from running it, PerfView capture is never silently started, CHIPSEC is never auto-run, and Memtest86+ remains a manual boot-environment test.
+
 ## Input contract
 
 Crash Doctor consumes the text files produced by `scripts/collect-diagnostics.ps1`. Missing files reduce coverage but do not make the analysis fail. The report states exactly which expected inputs were present.
 
-Binary `.evtx` files are preserved by the collector for deeper manual analysis, but the current rule engine intentionally reads the text exports first so it remains dependency-free. The collector also records OS/boot time, published drivers and a focused system-driver view so post-change snapshots can prove what is actually loaded.
+Binary `.evtx` files are preserved by the collector. They can now be converted with the optional `evtx_dump` provider for deeper analysis, while the core rule engine continues to read the collector's text exports first so a normal snapshot remains portable and dependency-free. The collector also records OS/boot time, published drivers and a focused system-driver view so post-change snapshots can prove what is actually loaded.
 
 ## Testing
 
-Run:
+Run the dependency-free regression suites:
 
 ```powershell
 .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
+.\windows-crash-doctor\tests\integration-self-test.ps1 -RepositoryMode
 ```
 
-The self-test creates both abnormal and quiet synthetic fixtures, confirms the important rules fire without high-severity false positives on the quiet fixture, exercises Markdown/JSON output, and runs the public-evidence secret guard.
+The first self-test creates both abnormal and quiet synthetic fixtures, confirms the important rules fire without high-severity false positives on the quiet fixture, exercises Markdown/JSON output, and runs the public-evidence secret guard. The integration test validates the provider catalogue and ensures privileged/manual tools cannot be silently installed.
 
-GitHub Actions runs the same self-test on `windows-latest`.
+GitHub Actions additionally installs **Pester** and **PSScriptAnalyzer**, runs static-analysis errors as a gate, and executes the Pester integration tests on `windows-latest`.
 
 ## Safety
 
-This tool can process logs containing serial numbers, account names, MAC addresses and other device identifiers. Generated reports should still be reviewed before being published.
+This tool can process logs containing serial numbers, account names, MAC addresses and other device identifiers. Generated reports and integration outputs should still be reviewed before being published.
 
 The repository-level guard scans text files for BitLocker-style 48-digit recovery passwords, but it is **not** a complete secret scanner. See [`../SECURITY_NOTICE.md`](../SECURITY_NOTICE.md).
 
@@ -90,5 +131,6 @@ The repository-level guard scans text files for BitLocker-style 48-digit recover
 - Event 41 is aftermath evidence, not a cause.
 - A reused Windows image is a confounder, not automatically the root cause.
 - Firmware Code 10 is an abnormal state, not automatic proof of an SMI/SMM hang.
+- Third-party output is evidence, not automatically a root-cause verdict.
 - One major change at a time.
 - All diagnostic outputs are reproducible from a named snapshot folder.
