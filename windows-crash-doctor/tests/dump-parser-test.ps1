@@ -19,6 +19,16 @@ function Assert-True {
     if (-not $Condition) { throw "ASSERTION FAILED: $Message" }
 }
 
+function Convert-HexU32 {
+    param([string]$Hex)
+    return [Convert]::ToUInt32($Hex, 16)
+}
+
+function Convert-HexU64 {
+    param([string]$Hex)
+    return [Convert]::ToUInt64($Hex, 16)
+}
+
 function Set-U16 {
     param([byte[]]$Bytes, [int]$Offset, [uint16]$Value)
     [BitConverter]::GetBytes($Value).CopyTo($Bytes, $Offset)
@@ -71,7 +81,7 @@ try {
 
     # MINIDUMP_EXCEPTION_STREAM.
     Set-U32 $mini 136 42
-    Set-U32 $mini 144 0xC0000005
+    Set-U32 $mini 144 (Convert-HexU32 'C0000005')
     Set-U64 $mini 160 0x1234567812345678
     Set-U32 $mini 168 2
     Set-U64 $mini 176 1
@@ -81,7 +91,7 @@ try {
     Set-U32 $mini 304 1
     Set-U64 $mini 308 0x00007ff600000000
     Set-U32 $mini 316 0x12000
-    Set-U32 $mini 320 0xAABBCCDD
+    Set-U32 $mini 320 (Convert-HexU32 'AABBCCDD')
     Set-U32 $mini 324 0x5F3759DF
     Set-U32 $mini 328 420
 
@@ -100,11 +110,22 @@ try {
     Assert-Equal $miniInfo.Header.NumberOfStreams 4 'stream count'
     Assert-Equal $miniInfo.SystemInfo.BuildNumber 26100 'Windows build parsing'
     Assert-Equal $miniInfo.Exception.ThreadId 42 'exception thread ID'
-    Assert-Equal $miniInfo.Exception.ExceptionCode ([uint32]0xC0000005) 'exception code'
+    Assert-Equal $miniInfo.Exception.ExceptionCode (Convert-HexU32 'C0000005') 'exception code'
     Assert-Equal $miniInfo.Exception.ExceptionAddress ([uint64]0x1234567812345678) 'exception address'
     Assert-Equal $miniInfo.ModuleCount 1 'module count'
     Assert-Equal $miniInfo.Modules[0].Name 'test.dll' 'module-name string parsing'
     Assert-Equal $miniInfo.ThreadCount 3 'thread count'
+
+    # Exercise the app's public CLI surface, not just the parser module.
+    $output = Join-Path $temp 'output'
+    New-Item -ItemType Directory -Path $output -Force | Out-Null
+    & (Join-Path $root 'Invoke-CrashDoctor.ps1') -DumpPath $miniPath -OutputDirectory $output | Out-Null
+    $dumpJsonPath = Join-Path $output 'crash-doctor-dump-report.json'
+    $dumpMarkdownPath = Join-Path $output 'crash-doctor-dump-report.md'
+    Assert-True (Test-Path -LiteralPath $dumpJsonPath) 'dump CLI JSON report must be created'
+    Assert-True (Test-Path -LiteralPath $dumpMarkdownPath) 'dump CLI Markdown report must be created'
+    $cliReport = Get-Content -LiteralPath $dumpJsonPath -Raw | ConvertFrom-Json
+    Assert-Equal $cliReport.Format 'MiniDump' 'dump CLI JSON format'
 
     # Synthetic x64 kernel crash dump header.
     $kernel64Path = Join-Path $temp 'synthetic-kernel64.dmp'
@@ -114,8 +135,8 @@ try {
     Set-U32 $kernel64 12 26100
     Set-U64 $kernel64 16 0x1111222233334444
     Set-U64 $kernel64 24 0x5555666677778888
-    Set-U64 $kernel64 32 0xfffff80000001000
-    Set-U64 $kernel64 40 0xfffff80000002000
+    Set-U64 $kernel64 32 (Convert-HexU64 'FFFFF80000001000')
+    Set-U64 $kernel64 40 (Convert-HexU64 'FFFFF80000002000')
     Set-U32 $kernel64 48 0x8664
     Set-U32 $kernel64 52 4
     Set-U32 $kernel64 56 0x139
@@ -123,7 +144,7 @@ try {
     Set-U64 $kernel64 72 0x1111
     Set-U64 $kernel64 80 0x2222
     Set-U64 $kernel64 88 0
-    Set-U64 $kernel64 128 0xfffff80000003000
+    Set-U64 $kernel64 128 (Convert-HexU64 'FFFFF80000003000')
     Set-U32 $kernel64 3992 2
     Set-I64 $kernel64 4000 123456789
     Set-I64 $kernel64 4008 133000000000000000
