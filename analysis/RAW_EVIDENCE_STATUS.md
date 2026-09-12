@@ -1,29 +1,32 @@
 # Raw evidence status
 
-All user-supplied evidence visible in the troubleshooting conversation has been inventoried and hashed. The repo's manifest records filenames, byte sizes, SHA-256 hashes and duplicate groups.
+The troubleshooting working session inventoried and hashed the user-supplied evidence available to that session. The resulting filename/size/SHA-256 inventory is committed at `evidence/manifests/evidence-manifest.csv`, including duplicate groups.
 
-## Duplicate evidence
+## What the manifest proves
 
-The repeated `a/b/c/d/e/f/g/h/i` EVTX uploads were checked by SHA-256. The duplicate copies are byte-identical to their originals. `1111.txt` and `1111(1).txt` are also byte-identical. The manifest retains every original filename so the upload history is auditable without pretending duplicate bytes are distinct evidence.
+The committed hashes make the evidence inventory auditable even though the large binary originals are not stored in this public repository. Matching SHA-256 values identify byte-identical duplicate uploads.
 
-## Binary upload limitation in this snapshot
+A hash proves byte identity for the file that was hashed; it does **not** prove that every historical event inside a reused Windows image belongs to the current physical ProBook.
 
-The GitHub connector available to this ChatGPT session can create repository text and Git blobs from supplied string content, but it does not accept a local sandbox file as an upload parameter. Streaming all of the tens of megabytes of EVTX/images through model text would be unsafe and impractical.
+## Complete archives outside Git
 
-Therefore this Git snapshot contains:
+The working session recorded two complete archives of the mounted evidence set:
 
-- complete analytical conclusions and corrections;
-- extracted critical evidence from the raw logs;
-- a SHA-256 manifest covering every mounted user evidence file;
-- the conversation records in redacted/text form where practical;
-- a repeatable collection script.
+- `hprobook-evidence-all.tar.gz` — SHA-256 `f9c98db4983be8b8ff7b95a7a1e7251e44af2dde01a2fb9b12997fb835124aa8`
+- `hprobook-evidence-all.zip` — SHA-256 `2d78d3166c4be0b1dccf8f5b0aa13e0961dd41eec04f15c591d3488e23bc374d`
 
-A lossless archive of the complete mounted evidence set was also created in the working sandbox as `hprobook-evidence-all.tar.gz`. Its SHA-256 at creation was:
+Those archives are **not part of this Git repository**. Treat the hashes as integrity records for the working-session artefacts unless the archives are later independently re-materialised and verified.
 
-`f9c98db4983be8b8ff7b95a7a1e7251e44af2dde01a2fb9b12997fb835124aa8`
+## What the public repository contains
 
-The archive intentionally uses the ChatGPT transcript export with the BitLocker recovery password redacted. Do **not** publish the exposed recovery password.
+- analytical conclusions and corrections under `analysis/`;
+- `evidence/manifests/evidence-manifest.csv` with the supplied-file inventory and duplicate hashes;
+- `raw/battery-report.html.gz` as a small directly committed raw-report sample;
+- `conversation/README.md` and `raw/README.md` documenting archive status;
+- a current investigation status dashboard;
+- one consolidated repeatable diagnostic collector plus an evidence-hashing script;
+- evidence-handling and public-repository security/redaction guidance.
 
-## Public-repository warning
+The large EVTX/image/raw-evidence set is intentionally not claimed as committed. Review `SECURITY_NOTICE.md`, `evidence/README.md` and `raw/README.md` before publishing diagnostic artefacts.
 
-The raw diagnostic files can contain serial numbers, device IDs, MAC addresses, SIDs and other machine-specific metadata. The repository is public, so review that exposure before manually adding the raw archive.
+**Do not publish the BitLocker recovery password exposed in the original troubleshooting chat.**
