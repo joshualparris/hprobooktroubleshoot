@@ -45,16 +45,19 @@ public sealed class PrivacyExportService
         ".ps1", ".psm1", ".cmd", ".bat", ".ini", ".cfg", ".conf", ".yml", ".yaml"
     };
 
+    private static readonly Regex PrivateKeyPattern = new(
+        "-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\\s\\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     private static readonly (Regex Pattern, string Replacement, string Label)[] Redactors =
     {
         (new Regex(@"(?<!\d)(?:\d{6}-){7}\d{6}(?!\d)", RegexOptions.Compiled), "[REDACTED_BITLOCKER_RECOVERY_PASSWORD]", "BitLocker recovery password"),
-        (new Regex(@"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", RegexOptions.Compiled | RegexOptions.IgnoreCase), "[REDACTED_PRIVATE_KEY]", "private key"),
         (new Regex(@"\bgh[pousr]_[A-Za-z0-9_]{20,}\b", RegexOptions.Compiled), "[REDACTED_GITHUB_TOKEN]", "GitHub token"),
         (new Regex(@"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", RegexOptions.Compiled), "[REDACTED_JWT]", "JWT"),
         (new Regex(@"(?i)\b(Authorization\s*:\s*Bearer\s+)[A-Za-z0-9._~+/-]{12,}={0,2}", RegexOptions.Compiled), "$1[REDACTED_TOKEN]", "bearer token"),
-        (new Regex(@"(?i)\b(password|passwd|pwd|api[_-]?key|access[_-]?token|refresh[_-]?token|secret)\b(\s*[:=]\s*)([^\s,;\"']+)", RegexOptions.Compiled), "$1$2[REDACTED_SECRET]", "credential-like value"),
+        (new Regex("(?i)\\b(password|passwd|pwd|api[_-]?key|access[_-]?token|refresh[_-]?token|secret)\\b(\\s*[:=]\\s*)([^\\s,;\\\"']+)", RegexOptions.Compiled), "$1$2[REDACTED_SECRET]", "credential-like value"),
         (new Regex(@"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", RegexOptions.Compiled), "[REDACTED_EMAIL]", "email address"),
-        (new Regex(@"(?i)\b[A-Z]:\\Users\\[^\\\r\n\t\"']+", RegexOptions.Compiled), @"C:\Users\[REDACTED_USER]", "Windows user path"),
+        (new Regex("(?i)\\b[A-Z]:\\\\Users\\\\[^\\\\\\r\\n\\t\\\"']+", RegexOptions.Compiled), @"C:\Users\[REDACTED_USER]", "Windows user path"),
         (new Regex(@"(?i)\b(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}\b", RegexOptions.Compiled), "[REDACTED_MAC]", "MAC address")
     };
 
@@ -68,16 +71,17 @@ public sealed class PrivacyExportService
         {
             var info = new FileInfo(file);
             var relative = Path.GetRelativePath(sourceDirectory, file);
-            var classification = Classify(info, relative);
-            entries.Add(classification);
+            entries.Add(Classify(info, relative));
         }
 
-        return new PrivacyExportPlan(sourceDirectory, entries.OrderBy(x => x.RelativePath, StringComparer.OrdinalIgnoreCase).ToList());
+        return new PrivacyExportPlan(
+            sourceDirectory,
+            entries.OrderBy(x => x.RelativePath, StringComparer.OrdinalIgnoreCase).ToList());
     }
 
     public PrivacyExportResult Export(PrivacyExportPlan plan, string zipPath)
     {
-        var sourceRoot = Path.GetFullPath(plan.SourceDirectory);
+        var sourceRoot = Path.GetFullPath(plan.SourceDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         if (!Directory.Exists(sourceRoot))
             throw new DirectoryNotFoundException(sourceRoot);
 
@@ -102,21 +106,21 @@ public sealed class PrivacyExportService
                     continue;
                 }
 
+                // Reclassify immediately before copy so a file changed after preview cannot bypass policy.
+                var current = Classify(new FileInfo(source), planned.RelativePath);
+                if (!current.Included)
+                {
+                    finalEntries.Add(current with { Reason = "Changed after preview: " + current.Reason });
+                    continue;
+                }
+
                 var destination = Path.Combine(staging, planned.RelativePath);
                 Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
 
-                if (IsTextFile(source))
-                {
-                    var text = File.ReadAllText(source);
-                    var redacted = Redact(text, out var redactionCount);
-                    File.WriteAllText(destination, redacted, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-                    finalEntries.Add(planned with { RedactionCount = redactionCount });
-                }
-                else
-                {
-                    File.Copy(source, destination, overwrite: true);
-                    finalEntries.Add(planned);
-                }
+                var text = File.ReadAllText(source);
+                var redacted = Redact(text, out var redactionCount);
+                File.WriteAllText(destination, redacted, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                finalEntries.Add(current with { RedactionCount = redactionCount });
             }
 
             var manifest = new
@@ -160,25 +164,25 @@ public sealed class PrivacyExportService
         if (lowerName.Contains("memory.dmp") || lowerName.Contains("credential") || lowerName.Contains("cookies") || lowerName.Contains("browser-history"))
             return new PrivacyExportEntry(relativePath, false, "High-risk filename; excluded by default.", 0, file.Length);
 
-        if (IsTextFile(file.FullName))
+        if (!IsTextFile(file.FullName))
+            return new PrivacyExportEntry(relativePath, false, "Unknown binary format; excluded because it cannot be privacy-scanned safely.", 0, file.Length);
+
+        try
         {
-            try
-            {
-                if (file.Length > MaxTextScanBytes)
-                    return new PrivacyExportEntry(relativePath, false, "Text-like file exceeds the privacy scanner size limit; excluded rather than copied blindly.", 0, file.Length);
+            if (file.Length > MaxTextScanBytes)
+                return new PrivacyExportEntry(relativePath, false, "Text-like file exceeds the privacy scanner size limit; excluded rather than copied blindly.", 0, file.Length);
 
-                var text = File.ReadAllText(file.FullName);
-                _ = Redact(text, out var redactionCount);
-                return new PrivacyExportEntry(relativePath, true, null, redactionCount, file.Length);
-            }
-            catch
-            {
-                return new PrivacyExportEntry(relativePath, false, "File could not be safely scanned as text; excluded by default.", 0, file.Length);
-            }
+            var text = File.ReadAllText(file.FullName);
+            if (PrivateKeyPattern.IsMatch(text))
+                return new PrivacyExportEntry(relativePath, false, "Private-key material detected; file excluded rather than transformed.", 0, file.Length);
+
+            _ = Redact(text, out var redactionCount);
+            return new PrivacyExportEntry(relativePath, true, null, redactionCount, file.Length);
         }
-
-        // Unknown binary formats can carry opaque identifiers/secrets. The safe export is opt-out rather than optimistic.
-        return new PrivacyExportEntry(relativePath, false, "Unknown binary format; excluded because it cannot be privacy-scanned safely.", 0, file.Length);
+        catch
+        {
+            return new PrivacyExportEntry(relativePath, false, "File could not be safely scanned as text; excluded by default.", 0, file.Length);
+        }
     }
 
     private static bool IsTextFile(string path) => TextExtensions.Contains(Path.GetExtension(path));
