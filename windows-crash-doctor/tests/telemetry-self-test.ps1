@@ -37,6 +37,8 @@ var OtherData = {};
 
     $telemetry = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $temp
     Assert-True $telemetry.Available 'Telemetry analysis reported unavailable.'
+    Assert-True ($telemetry.Sensor.Provider -eq 'HWiNFO-style CSV') 'HWiNFO fixture used the wrong provider adapter.'
+    Assert-True ($telemetry.Sensor.Summary.SampleCount -eq 3) 'CSV rows were not enumerated as three samples.'
 
     $ids = @($telemetry.Findings | ForEach-Object { $_.Id })
     foreach ($expected in @(
@@ -69,6 +71,39 @@ var OtherData = {};
     $markdown = ConvertTo-CrashDoctorTelemetryMarkdownSection -Telemetry $telemetry
     Assert-True ($markdown -match 'Telemetry summary') 'Telemetry Markdown section is missing.'
     Assert-True ($markdown -match 'In-window abnormal shutdowns') 'Power-report summary is missing from Markdown.'
+
+    # Native Crash Doctor deep captures use LibreHardwareMonitor JSONL. This fixture proves
+    # that the same telemetry findings pipeline now consumes that format without claiming
+    # WHEA/drive-health signals the provider does not expose.
+    $jsonTemp = Join-Path $temp 'lhm'
+    New-Item -ItemType Directory -Path $jsonTemp -Force | Out-Null
+    @'
+{"Sample":1,"CapturedAt":"2026-09-12T15:16:14+10:00","HardwareType":"Memory","HardwareName":"Memory","SensorType":"Load","SensorName":"Memory","Value":91}
+{"Sample":1,"CapturedAt":"2026-09-12T15:16:14+10:00","HardwareType":"Cpu","HardwareName":"Intel CPU","SensorType":"Load","SensorName":"CPU Total","Value":42}
+{"Sample":1,"CapturedAt":"2026-09-12T15:16:14+10:00","HardwareType":"Cpu","HardwareName":"Intel CPU","SensorType":"Temperature","SensorName":"CPU Package","Value":48}
+{"Sample":1,"CapturedAt":"2026-09-12T15:16:14+10:00","HardwareType":"Storage","HardwareName":"SSD","SensorType":"Load","SensorName":"Total Activity","Value":12}
+{"Sample":2,"CapturedAt":"2026-09-12T15:16:16+10:00","HardwareType":"Memory","HardwareName":"Memory","SensorType":"Load","SensorName":"Memory","Value":92}
+{"Sample":2,"CapturedAt":"2026-09-12T15:16:16+10:00","HardwareType":"Cpu","HardwareName":"Intel CPU","SensorType":"Load","SensorName":"CPU Total","Value":100}
+{"Sample":2,"CapturedAt":"2026-09-12T15:16:16+10:00","HardwareType":"Cpu","HardwareName":"Intel CPU","SensorType":"Temperature","SensorName":"CPU Package","Value":52}
+{"Sample":2,"CapturedAt":"2026-09-12T15:16:16+10:00","HardwareType":"Storage","HardwareName":"SSD","SensorType":"Load","SensorName":"Total Activity","Value":60}
+not-json-and-must-be-skipped
+{"Sample":3,"CapturedAt":"2026-09-12T15:16:18+10:00","HardwareType":"Memory","HardwareName":"Memory","SensorType":"Load","SensorName":"Memory","Value":90}
+{"Sample":3,"CapturedAt":"2026-09-12T15:16:18+10:00","HardwareType":"Cpu","HardwareName":"Intel CPU","SensorType":"Load","SensorName":"CPU Total","Value":35}
+{"Sample":3,"CapturedAt":"2026-09-12T15:16:18+10:00","HardwareType":"Cpu","HardwareName":"Intel CPU","SensorType":"Temperature","SensorName":"CPU Package","Value":46}
+{"Sample":3,"CapturedAt":"2026-09-12T15:16:18+10:00","HardwareType":"Storage","HardwareName":"SSD","SensorType":"Load","SensorName":"Total Activity","Value":18}
+'@ | Set-Content -LiteralPath (Join-Path $jsonTemp 'sensor-fixture.jsonl') -Encoding utf8
+
+    $lhm = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $jsonTemp
+    Assert-True $lhm.Available 'LibreHardwareMonitor telemetry analysis reported unavailable.'
+    Assert-True ($lhm.Sensor.Provider -eq 'LibreHardwareMonitor') 'JSONL fixture used the wrong provider adapter.'
+    Assert-True ($lhm.Sensor.Summary.SampleCount -eq 3) 'JSONL samples were not grouped correctly.'
+    Assert-True ($lhm.Sensor.Summary.CombinedWorkloadBurstCount -eq 1) 'JSONL combined workload burst was not detected.'
+    $lhmIds = @($lhm.Findings | ForEach-Object { $_.Id })
+    foreach ($expected in @('sensor-sustained-memory-pressure','sensor-no-thermal-throttle-evidence','sensor-capture-continuous','sensor-combined-workload-burst')) {
+        Assert-True ($lhmIds -contains $expected) "LibreHardwareMonitor expected finding did not fire: $expected"
+    }
+    Assert-True (-not ($lhmIds -contains 'sensor-whea-counter-clean')) 'LibreHardwareMonitor path invented WHEA negative evidence.'
+    Assert-True (-not ($lhmIds -contains 'sensor-drive-health-reassuring')) 'LibreHardwareMonitor path invented drive-health negative evidence.'
 
     Write-Host 'Windows Crash Doctor telemetry self-test: PASS'
 }
