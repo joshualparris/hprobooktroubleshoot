@@ -43,6 +43,7 @@ public sealed record ProcessResult(
 public sealed class PowerShellRunner
 {
     private readonly RedactionService _redaction = new();
+    private static readonly TimeSpan CleanupGrace = TimeSpan.FromSeconds(3);
 
     public async Task<ProcessResult> RunFileAsync(
         string scriptPath,
@@ -158,9 +159,14 @@ public sealed class PowerShellRunner
         catch (OperationCanceledException)
         {
             KillTree(process);
-            try { await process.WaitForExitAsync(); } catch { }
+            await WaitForExitWithGraceAsync(process, CleanupGrace);
         }
-        await Task.WhenAll(stdoutTask, stderrTask);
+
+        var pumps = Task.WhenAll(stdoutTask, stderrTask);
+        if (await Task.WhenAny(pumps, Task.Delay(CleanupGrace)) == pumps)
+        {
+            try { await pumps; } catch { }
+        }
 
         var finished = DateTimeOffset.UtcNow;
         var redactedError = _redaction.RedactForLog(stderr.ToString());
@@ -187,6 +193,15 @@ public sealed class PowerShellRunner
             var finishedAt = DateTimeOffset.UtcNow;
             return new ProcessResult(code, "", "", state, started, finishedAt, finishedAt - started, attempt, reason);
         }
+    }
+
+    private static async Task WaitForExitWithGraceAsync(Process process, TimeSpan grace)
+    {
+        if (process.HasExited) return;
+        using var cleanupCts = new CancellationTokenSource(grace);
+        try { await process.WaitForExitAsync(cleanupCts.Token); }
+        catch (OperationCanceledException) { KillTree(process); }
+        catch (InvalidOperationException) { }
     }
 
     private static bool IsRetryable(ProcessResult result) => result.Status is ProcessExecutionStatus.TimedOut or ProcessExecutionStatus.FailedRetryable;
