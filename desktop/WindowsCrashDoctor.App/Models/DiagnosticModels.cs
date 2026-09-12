@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using System.Windows.Media;
 
 namespace WindowsCrashDoctor.Models;
 
@@ -66,24 +65,6 @@ public sealed class DiagnosticFinding
     public string? RuleVersion { get; set; }
     public string? SourceCollector { get; set; }
     public string? ComparisonState { get; set; }
-
-    [JsonIgnore]
-    public Brush SeverityBrush => Severity switch
-    {
-        "Critical" or "High" => new SolidColorBrush(Color.FromRgb(217, 45, 32)),
-        "Medium" => new SolidColorBrush(Color.FromRgb(220, 104, 3)),
-        "Low" => new SolidColorBrush(Color.FromRgb(37, 99, 235)),
-        _ => new SolidColorBrush(Color.FromRgb(3, 152, 85))
-    };
-
-    [JsonIgnore]
-    public Brush SeverityBackground => Severity switch
-    {
-        "Critical" or "High" => new SolidColorBrush(Color.FromRgb(254, 243, 242)),
-        "Medium" => new SolidColorBrush(Color.FromRgb(255, 246, 232)),
-        "Low" => new SolidColorBrush(Color.FromRgb(234, 241, 255)),
-        _ => new SolidColorBrush(Color.FromRgb(236, 253, 243))
-    };
 }
 
 public sealed class RunMetadata
@@ -219,4 +200,11 @@ public sealed class AppSettings
 {
     public bool DarkMode { get; set; }
     public string? LastEvidencePath { get; set; }
+}
+
+public sealed class SettingsDocument
+{
+    public const string CurrentSchemaVersion = "1.0";
+    public string SchemaVersion { get; set; } = CurrentSchemaVersion;
+    public AppSettings Settings { get; set; } = new();
 }
