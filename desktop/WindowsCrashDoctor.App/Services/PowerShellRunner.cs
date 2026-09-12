@@ -135,10 +135,6 @@ public sealed class PowerShellRunner
             return Result(-1, ProcessExecutionStatus.Unavailable, _redaction.RedactForLog(ex.Message));
         }
 
-        using var timeoutCts = new CancellationTokenSource(timeout);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
-        using var registration = linkedCts.Token.Register(() => KillTree(process));
-
         async Task PumpAsync(StreamReader reader, StringBuilder destination, bool error)
         {
             while (true)
@@ -152,14 +148,24 @@ public sealed class PowerShellRunner
 
         var stdoutTask = PumpAsync(process.StandardOutput, stdout, false);
         var stderrTask = PumpAsync(process.StandardError, stderr, true);
-        try
+        var exitTask = process.WaitForExitAsync();
+        var timeoutTask = Task.Delay(timeout);
+        var cancellationTask = cancellationToken.CanBeCanceled
+            ? Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken)
+            : Task.Delay(Timeout.InfiniteTimeSpan);
+
+        var winner = await Task.WhenAny(exitTask, timeoutTask, cancellationTask);
+        var wasCancelled = winner == cancellationTask;
+        var wasTimedOut = winner == timeoutTask;
+
+        if (winner != exitTask)
         {
-            await process.WaitForExitAsync(linkedCts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            KillTree(process);
+            await TerminateProcessTreeAsync(process);
             await WaitForExitWithGraceAsync(process, CleanupGrace);
+        }
+        else
+        {
+            try { await exitTask; } catch { }
         }
 
         var pumps = Task.WhenAll(stdoutTask, stderrTask);
@@ -171,9 +177,9 @@ public sealed class PowerShellRunner
         var finished = DateTimeOffset.UtcNow;
         var redactedError = _redaction.RedactForLog(stderr.ToString());
         var exitCode = process.HasExited ? process.ExitCode : -1;
-        var status = cancellationToken.IsCancellationRequested
+        var status = wasCancelled
             ? ProcessExecutionStatus.Cancelled
-            : timeoutCts.IsCancellationRequested
+            : wasTimedOut
                 ? ProcessExecutionStatus.TimedOut
                 : exitCode == 0
                     ? (string.IsNullOrWhiteSpace(stderr.ToString()) ? ProcessExecutionStatus.Completed : ProcessExecutionStatus.CompletedWithWarnings)
@@ -195,12 +201,30 @@ public sealed class PowerShellRunner
         }
     }
 
+    private static async Task TerminateProcessTreeAsync(Process process)
+    {
+        if (process.HasExited) return;
+
+        Task treeKill = Task.Run(() =>
+        {
+            try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+        });
+
+        if (await Task.WhenAny(treeKill, Task.Delay(TimeSpan.FromSeconds(1))) != treeKill)
+        {
+            try { if (!process.HasExited) process.Kill(); } catch { }
+        }
+    }
+
     private static async Task WaitForExitWithGraceAsync(Process process, TimeSpan grace)
     {
         if (process.HasExited) return;
         using var cleanupCts = new CancellationTokenSource(grace);
         try { await process.WaitForExitAsync(cleanupCts.Token); }
-        catch (OperationCanceledException) { KillTree(process); }
+        catch (OperationCanceledException)
+        {
+            try { if (!process.HasExited) process.Kill(); } catch { }
+        }
         catch (InvalidOperationException) { }
     }
 
@@ -212,10 +236,5 @@ public sealed class PowerShellRunner
         return transient.Any(x => error.Contains(x, StringComparison.OrdinalIgnoreCase))
             ? ProcessExecutionStatus.FailedRetryable
             : ProcessExecutionStatus.FailedPermanent;
-    }
-
-    private static void KillTree(Process process)
-    {
-        try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
     }
 }
