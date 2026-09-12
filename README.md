@@ -7,58 +7,73 @@ This repository serves two related purposes:
 
 The core rule is simple: keep **observation**, **current-machine telemetry**, **inherited image history**, **interpretation** and **causality** separate. Change one major variable at a time.
 
-> **Engineering status:** Windows Crash Doctor is an advanced preview, not yet a hardened general release. The repository-wide [`REPOSITORY_AUDIT.md`](docs/REPOSITORY_AUDIT.md) tracks current integration, testing, privacy, installer and release-readiness risks with explicit acceptance criteria.
+> **Engineering status:** Windows Crash Doctor is currently **0.3.0-preview.1** with engine **0.3.0**. It is an advanced preview, not yet a hardened stable release. See [`RELEASE_VERIFICATION.md`](docs/RELEASE_VERIFICATION.md) for the exact Product Gate/canary state and [`REPOSITORY_AUDIT.md`](docs/REPOSITORY_AUDIT.md) for the dated engineering audit.
 
 ## Windows Crash Doctor Desktop
 
-Windows Crash Doctor now has a native Windows desktop front end in `desktop/WindowsCrashDoctor.App`.
+Windows Crash Doctor has a native Windows WPF front end in `desktop/WindowsCrashDoctor.App`.
 
-The desktop preview includes:
+The current source includes:
 
-- a polished dashboard with live CPU/RAM/temperature cards;
-- one-click **Run Full Diagnosis**;
-- ranked evidence cards with severity and recommended next action;
+- a dashboard with live CPU/RAM/temperature cards;
+- one-click **Run Full Diagnosis** with preflight and UAC only when collection requires it;
+- ranked evidence cards with severity, confidence and recommended next action;
 - live diagnostic progress and logs;
-- optional 30-minute LibreHardwareMonitor deep sensor capture; normalization of that JSONL capture into the snapshot telemetry rules is still being integrated;
-- local diagnostic-run history;
+- optional LibreHardwareMonitor deep sensor capture, with its JSONL data normalized into the same telemetry analysis path used for supported HWiNFO CSV evidence;
+- a SQLite diagnostic run ledger with legacy JSON-history migration;
+- finding/evidence fingerprints and previous comparable-run comparison (`NEW`, `RESOLVED`, `IMPROVED`, `WORSENED`, `UNCHANGED`, `UNKNOWN`);
+- a canonical diagnostic registry used for coverage/provenance metadata;
+- bounded process timeout/cancellation/retry behaviour for desktop PowerShell operations;
 - native `.dmp` / `.mdmp` structural analysis through the Crash Doctor dump parser;
 - open-source provider installation/status;
-- local diagnostic ZIP export with an explicit sensitivity warning; structured privacy review/redaction is still planned;
+- privacy-reviewed shareable ZIP export with preview, conservative high-risk exclusions, text redaction and `export-manifest.json`;
 - light and dark themes;
-- a self-contained `WindowsCrashDoctor.exe` build with the core PowerShell engine embedded; the audit tracks an outstanding telemetry-module packaging gap.
+- a self-contained `WindowsCrashDoctor.exe` with telemetry, registry, version metadata and the required PowerShell engine resources embedded.
 
-### Download the desktop EXE
+Some v2 architecture is still partial: the diagnostic registry does not yet drive every collector command, and per-diagnostic execution records for the monolithic collector are still partly inferred from produced evidence rather than every probe being independently timed/retried.
 
-The rolling desktop preview release is built by GitHub Actions:
+### Download / canary status
 
-**[Download WindowsCrashDoctor.exe](https://github.com/joshualparris/hprobooktroubleshoot/releases/download/windows-crash-doctor-desktop-latest/WindowsCrashDoctor.exe)**
+The rolling canary URL is:
 
-The EXE is currently unsigned, so Windows SmartScreen may show **Unknown Publisher**. A SHA-256 file is published beside the EXE for manual verification. The current GUI installer does **not yet verify that checksum automatically**; this is a P0 audit finding rather than a completed trust feature.
+**[WindowsCrashDoctor.exe canary](https://github.com/joshualparris/hprobooktroubleshoot/releases/download/windows-crash-doctor-desktop-latest/WindowsCrashDoctor.exe)**
 
-For a one-click preview install that creates a Desktop shortcut, download and double-click [`INSTALL-WINDOWS-CRASH-DOCTOR-GUI.cmd`](INSTALL-WINDOWS-CRASH-DOCTOR-GUI.cmd). For machines where provenance matters, review the audit and verify the release hash first.
+**Do not assume the rolling URL is the current verified `0.3.0-preview.1` build merely because a file is present.** The Product Gate deliberately refuses to replace the canary when the packaged EXE self-test fails. Check [`docs/RELEASE_VERIFICATION.md`](docs/RELEASE_VERIFICATION.md) for the exact verified commit before installing.
+
+The EXE is currently unsigned, so Windows SmartScreen may show **Unknown Publisher**. Current installers verify the downloaded release asset's SHA-256 before installation/activation, but hash verification is not Authenticode publisher trust.
+
+For the GUI install path, download and run [`INSTALL-WINDOWS-CRASH-DOCTOR-GUI.cmd`](INSTALL-WINDOWS-CRASH-DOCTOR-GUI.cmd). The bootstrap and installer are designed to verify release assets before first launch.
 
 ## Project status
 
-**Current `main` contains:**
+**Current source contains:**
 
 - reproducible Windows diagnostic collector;
-- evidence-first Crash Doctor snapshot analyser;
-- Markdown + JSON reports;
+- evidence-first snapshot analyser;
+- HWiNFO CSV and LibreHardwareMonitor JSONL telemetry analysis;
+- Markdown + JSON reports with version/provenance metadata;
 - native minidump/kernel-dump parser foundation;
 - verified optional open-source provider layer;
-- synthetic Windows regression tests and PowerShell QA;
+- diagnostic registry and registry-backed coverage/provenance;
+- preflight health checks;
+- SQLite run history, fingerprints and previous-run comparison;
+- privacy-reviewed local shareable export;
+- synthetic Windows regression tests, real DbgHelp minidump smoke test and PowerShell QA;
 - public-evidence/BitLocker recovery-key guard;
-- command-line launcher/install path;
-- native WPF desktop GUI and automated preview EXE release pipeline;
+- hash-verifying GUI and CLI install paths;
+- native WPF desktop GUI;
+- a gated canary release pipeline that only publishes an already-tested artifact after the packaged EXE self-test passes;
 - documented HP ProBook evidence and controlled test plan.
 
-The **[repository engineering audit](docs/REPOSITORY_AUDIT.md)** is the quality/risk source of truth and identifies the current release blockers. Planned capabilities are tracked in the **[100-item Windows Crash Doctor roadmap](docs/ROADMAP_100.md)**, while cross-repository engineering adaptations are tracked separately in the **[GitHub Borrow Roadmap](docs/GITHUB_BORROW_ROADMAP.md)**.
+The **[release verification record](docs/RELEASE_VERIFICATION.md)** is the authority for whether a particular canary is actually releasable. The **[repository engineering audit](docs/REPOSITORY_AUDIT.md)** is a dated quality/risk baseline. Planned capabilities are tracked in the **[100-item roadmap](docs/ROADMAP_100.md)**, while cross-repository engineering adaptations and their current completion state are tracked in the **[GitHub Borrow Roadmap](docs/GITHUB_BORROW_ROADMAP.md)**.
 
 ## Command-line preview install
 
-If you prefer the original PowerShell/console workflow, the development installer is available at `scripts/Install-WindowsCrashDoctor.ps1`.
+The console installer is `scripts/Install-WindowsCrashDoctor.ps1`.
 
-The current installer downloads mutable `main`, requests Administrator rights and runs the installed workflow. **It is therefore a preview/development path, not yet the recommended hardened install mechanism.** `AUD-005` in the repository audit requires immutable version pinning and cryptographic verification before elevated execution.
+The current CLI installer resolves the canary release, downloads the release-built engine ZIP and its checksum, verifies SHA-256, extracts into a staging location, runs package self-tests before activation and installs into the current user's profile. The installer itself stays in standard-user mode; the diagnostic runner requests elevation when collection actually needs it.
+
+This remains a **canary/preview** install path. A future stable channel still needs immutable semantic releases, stronger supply-chain provenance and Authenticode signing before it should be described as hardened stable distribution.
 
 ## Manual quick start
 
@@ -91,10 +106,11 @@ Open an elevated Windows PowerShell prompt in a trusted local checkout of the re
 .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
 .\windows-crash-doctor\tests\telemetry-self-test.ps1
 .\windows-crash-doctor\tests\dump-parser-test.ps1
+.\windows-crash-doctor\tests\dump-parser-real-smoke.ps1
 .\windows-crash-doctor\tests\integration-self-test.ps1 -RepositoryMode
 ```
 
-Treat the required workflow as the product-health signal; the presence of a built EXE by itself does not prove the engine and desktop are release-ready.
+Treat the **Product Gate** as the release-health signal. Passing repository tests or producing an EXE is not, by itself, proof that the packaged executable and release handoff are healthy.
 
 ## Windows Crash Doctor today
 
@@ -112,7 +128,8 @@ The rule engine understands evidence relevant to this case, including:
 - WHEA references;
 - Kernel-Power Event 41;
 - volmgr Event 161;
-- HWiNFO-style sensor CSV telemetry and sustained memory pressure;
+- supported HWiNFO CSV and LibreHardwareMonitor JSONL telemetry;
+- sustained memory pressure, thermal state, continuity and workload-burst evidence where the provider captures those signals;
 - current-window System Power Report abnormal-shutdown evidence.
 
 Each finding keeps **severity**, **confidence**, **evidence**, **interpretation** and **next step** separate.
@@ -123,15 +140,17 @@ It does **not** silently flash firmware, remove drivers, disable security, chang
 
 | Document | Purpose |
 |---|---|
-| [`docs/REPOSITORY_AUDIT.md`](docs/REPOSITORY_AUDIT.md) | Canonical repository-wide engineering quality/risk audit and P0/P1/P2 improvement plan |
+| [`docs/RELEASE_VERIFICATION.md`](docs/RELEASE_VERIFICATION.md) | Current release-proof contract, canary status and completion audit |
+| [`docs/REPOSITORY_AUDIT.md`](docs/REPOSITORY_AUDIT.md) | Dated repository-wide engineering quality/risk audit |
+| [`docs/PHASE0_IMPLEMENTATION_2026-09-12.md`](docs/PHASE0_IMPLEMENTATION_2026-09-12.md) | Concrete Phase 0/P0 remediation implementation record |
 | [`desktop/WindowsCrashDoctor.App/README.md`](desktop/WindowsCrashDoctor.App/README.md) | Native desktop app architecture and build |
 | [`docs/README.md`](docs/README.md) | Documentation map and authority rules |
 | [`windows-crash-doctor/README.md`](windows-crash-doctor/README.md) | Crash Doctor engine usage and behaviour |
 | [`docs/OPEN_SOURCE_INTEGRATIONS.md`](docs/OPEN_SOURCE_INTEGRATIONS.md) | Open-source provider architecture |
 | [`docs/WINDOWS_CRASH_DOCTOR_PLAN.md`](docs/WINDOWS_CRASH_DOCTOR_PLAN.md) | Product architecture and design |
-| [`docs/GITHUB_BORROW_ROADMAP.md`](docs/GITHUB_BORROW_ROADMAP.md) | Adapt reusable diagnostics/reliability/security patterns from Josh's other repositories |
+| [`docs/GITHUB_BORROW_ROADMAP.md`](docs/GITHUB_BORROW_ROADMAP.md) | Cross-repository adaptation roadmap with implementation status |
 | [`docs/COMPARABLE_TOOLS_RESEARCH.md`](docs/COMPARABLE_TOOLS_RESEARCH.md) | Comparator-tool research |
-| [`docs/ROADMAP_100.md`](docs/ROADMAP_100.md) | Canonical 100-item capability backlog |
+| [`docs/ROADMAP_100.md`](docs/ROADMAP_100.md) | 100-item capability backlog |
 | [`analysis/STATUS.md`](analysis/STATUS.md) | Current ProBook operational status |
 | [`analysis/FORENSIC_UPDATE_2026-09-12.md`](analysis/FORENSIC_UPDATE_2026-09-12.md) | Latest sensor/power forensic correlation |
 | [`analysis/TEST_PLAN.md`](analysis/TEST_PLAN.md) | One-variable-at-a-time ProBook test sequence |
@@ -188,11 +207,11 @@ See [`analysis/TEST_PLAN.md`](analysis/TEST_PLAN.md) before changing anything.
 analysis/                 ProBook case reasoning, status and controlled test plan
 conversation/             conversation-archive provenance notes
 desktop/                  native Windows Crash Doctor WPF app
-docs/                     product architecture, research, audit and roadmaps
+docs/                     product architecture, research, audit, release verification and roadmaps
 evidence/                 evidence workflow and SHA-256 manifests
 raw/                      explicitly documented raw/archive boundary
 scripts/                  collection, installation, hashing and public-evidence guard
-windows-crash-doctor/     Crash Doctor engine, CLI, providers and tests
+windows-crash-doctor/     Crash Doctor engine, CLI, registry, providers and tests
 SECURITY_NOTICE.md        privacy/security rules
 ```
 
@@ -200,4 +219,4 @@ SECURITY_NOTICE.md        privacy/security rules
 
 Raw logs are private by default. EVTX, ETL, WER files, dumps, `msinfo32`, SetupAPI, screenshots and memory dumps can contain usernames, hardware identifiers, network details, application state or secrets.
 
-Never commit a BitLocker recovery password. Review [`SECURITY_NOTICE.md`](SECURITY_NOTICE.md) before publishing diagnostic artefacts.
+The desktop shareable-export path creates a reviewed/redacted derivative and leaves original evidence untouched, but no automated scanner should be treated as infallible. Never commit a BitLocker recovery password. Review [`SECURITY_NOTICE.md`](SECURITY_NOTICE.md) before publishing diagnostic artefacts.
