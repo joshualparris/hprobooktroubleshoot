@@ -6,8 +6,20 @@ collection-*/
 HPProBook-*/
 crash-doctor-report.md
 crash-doctor-report.json
+wcd-sensors-*.jsonl
+hayabusa-timeline*.csv
+osquery-inventory-*.json
+smartctl-inventory-*.json
+*.evtx.json
+*.evtx.jsonl
+*.evtx.xml
 *.dmp
 *.etl
+
+# Third-party tools are downloaded from their official upstream releases.
+# Do not vendor binaries or extracted packages into Git.
+.tools/
+windows-crash-doctor/.tools/
 
 # OS/editor noise
 Thumbs.db
