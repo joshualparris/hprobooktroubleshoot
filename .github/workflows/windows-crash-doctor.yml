@@ -60,6 +60,41 @@ jobs:
             exit 1
           }
 
+      - name: Install PowerShell QA modules
+        shell: powershell
+        run: |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+
+      - name: Run PSScriptAnalyzer errors gate
+        shell: powershell
+        run: |
+          Import-Module PSScriptAnalyzer
+          $issues = @()
+          $issues += Invoke-ScriptAnalyzer -Path '.\windows-crash-doctor' -Recurse -Severity Error
+          $issues += Invoke-ScriptAnalyzer -Path '.\scripts' -Recurse -Severity Error
+          if ($issues.Count -gt 0) {
+            $issues | Format-Table -AutoSize | Out-String | Write-Host
+            exit 1
+          }
+
       - name: Run Windows Crash Doctor self-test
         shell: powershell
         run: .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
+
+      - name: Run integration self-test
+        shell: powershell
+        run: .\windows-crash-doctor\tests\integration-self-test.ps1 -RepositoryMode
+
+      - name: Run Pester integration tests
+        shell: powershell
+        run: |
+          Import-Module Pester -MinimumVersion 5.5.0
+          $config = New-PesterConfiguration
+          $config.Run.Path = '.\windows-crash-doctor\tests\Integrations.Tests.ps1'
+          $config.Run.PassThru = $true
+          $config.Output.Verbosity = 'Detailed'
+          $result = Invoke-Pester -Configuration $config
+          if ($result.FailedCount -gt 0) { exit 1 }
