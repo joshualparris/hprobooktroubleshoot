@@ -68,9 +68,20 @@ function New-TestRelease {
 function Invoke-InstallerChild {
     param([string[]]$Arguments)
 
-    $output = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $installer @Arguments 2>&1 | Out-String
+    $previousPreference = $ErrorActionPreference
+    try {
+        # Negative integrity tests intentionally make the child write to stderr. Treat that as
+        # captured test output rather than allowing the parent script's Stop preference to abort.
+        $ErrorActionPreference = 'Continue'
+        $output = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $installer @Arguments 2>&1 | Out-String
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+
     return [pscustomobject]@{
-        ExitCode = $LASTEXITCODE
+        ExitCode = $exitCode
         Output = $output
     }
 }
