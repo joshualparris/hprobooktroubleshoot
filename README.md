@@ -50,6 +50,42 @@ See [`analysis/MASTER_ANALYSIS.md`](analysis/MASTER_ANALYSIS.md) for the detaile
 
 The detailed staged plan is in [`analysis/TEST_PLAN.md`](analysis/TEST_PLAN.md).
 
+## Windows Crash Doctor
+
+This repository now contains a reusable Windows hard-freeze diagnostic app built from the ProBook investigation.
+
+Windows Crash Doctor adds:
+
+- a persistent pre-freeze canary;
+- automatic abnormal-reboot incident reconstruction;
+- correlated Windows event timelines;
+- crash-dump/pagefile readiness checks;
+- driver, firmware and reused-image diagnostics;
+- hardware/storage evidence;
+- explainable hypothesis ranking;
+- one-variable-at-a-time A/B experiment tracking;
+- a staged remediation/verification plan;
+- an HP ProBook 11 G2 machine profile;
+- Windows CI plus an installable ZIP build.
+
+Install from the extracted repository in an elevated PowerShell window:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\windows-crash-doctor\install.ps1
+```
+
+Or download and run the reviewed bootstrap:
+
+```powershell
+$u = 'https://raw.githubusercontent.com/joshualparris/hprobooktroubleshoot/main/windows-crash-doctor/bootstrap.ps1'
+$p = Join-Path $env:TEMP 'wcd-bootstrap.ps1'
+Invoke-WebRequest -UseBasicParsing $u -OutFile $p
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p
+```
+
+See [`windows-crash-doctor/README.md`](windows-crash-doctor/README.md) for operation and [`docs/WINDOWS_CRASH_DOCTOR_PLAN.md`](docs/WINDOWS_CRASH_DOCTOR_PLAN.md) for the full architecture and the ten diagnostic improvements.
+
 ## Reproducible collection
 
 Run from an elevated PowerShell prompt for the most complete snapshot:
@@ -96,9 +132,20 @@ raw/
   README.md                complete archive names/hashes and upload boundary
   battery-report.html.gz   small directly committed raw-report sample
 
+windows-crash-doctor/
+  WindowsCrashDoctor.psm1  diagnostic/hypothesis engine
+  canary.ps1               persistent pre-freeze telemetry
+  install.ps1              SYSTEM startup-task installer
+  profiles/                machine-specific guidance profiles
+  tests/                   Windows self-test
+
+docs/
+  WINDOWS_CRASH_DOCTOR_PLAN.md  architecture + ten improvements
+
 scripts/
-  collect-diagnostics.ps1  consolidated repeatable diagnostic snapshot
-  hash-evidence.ps1        SHA-256 manifest + duplicate detection
+  collect-diagnostics.ps1       canonical deep diagnostic snapshot
+  hash-evidence.ps1             SHA-256 manifest + duplicate detection
+  package-windows-crash-doctor.ps1  installable ZIP builder
 
 SECURITY_NOTICE.md          public-repository privacy/redaction rules
 ```
