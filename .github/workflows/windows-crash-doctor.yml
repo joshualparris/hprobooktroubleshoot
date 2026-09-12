@@ -1,0 +1,22 @@
+name: Windows Crash Doctor QA
+
+on:
+  push:
+    paths:
+      - 'windows-crash-doctor/**'
+      - 'scripts/collect-diagnostics.ps1'
+      - '.github/workflows/windows-crash-doctor.yml'
+  pull_request:
+    paths:
+      - 'windows-crash-doctor/**'
+      - 'scripts/collect-diagnostics.ps1'
+      - '.github/workflows/windows-crash-doctor.yml'
+
+jobs:
+  self-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Windows Crash Doctor self-test
+        shell: powershell
+        run: .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
