@@ -110,13 +110,14 @@ powercfg /systempowerreport /output $powerReport | Out-Null
 Start-Process -FilePath 'msinfo32.exe' -ArgumentList @('/nfo', $msinfoReport) -Wait -NoNewWindow
 
 $metadataPath = Join-Path -Path $out -ChildPath 'collection-metadata.txt'
-[ordered]@{
+$metadata = [ordered]@{
     CollectedAtLocal = (Get-Date).ToString('o')
     EventHours       = $EventHours
     ComputerName     = $env:COMPUTERNAME
     UserName         = $env:USERNAME
     OutputDirectory  = $out
-}.GetEnumerator() | ForEach-Object {
+}
+$metadata.GetEnumerator() | ForEach-Object {
     '{0}={1}' -f $_.Key, $_.Value
 } | Out-File -FilePath $metadataPath -Encoding utf8
 
