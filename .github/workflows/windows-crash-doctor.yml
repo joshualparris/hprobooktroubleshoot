@@ -4,19 +4,39 @@ on:
   push:
     paths:
       - 'windows-crash-doctor/**'
-      - 'scripts/collect-diagnostics.ps1'
+      - 'scripts/**'
       - '.github/workflows/windows-crash-doctor.yml'
   pull_request:
     paths:
       - 'windows-crash-doctor/**'
-      - 'scripts/collect-diagnostics.ps1'
+      - 'scripts/**'
       - '.github/workflows/windows-crash-doctor.yml'
+
+permissions:
+  contents: read
 
 jobs:
   self-test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Parse PowerShell files
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem windows-crash-doctor,scripts -Recurse -Include *.ps1,*.psm1 | ForEach-Object {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $failed = $true
+              Write-Host "Parse errors in $($_.FullName)"
+              $errors | Format-List | Out-String | Write-Host
+            }
+          }
+          if ($failed) { exit 1 }
+
       - name: Run Windows Crash Doctor self-test
         shell: powershell
         run: .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
