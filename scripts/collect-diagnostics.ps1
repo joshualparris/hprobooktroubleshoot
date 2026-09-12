@@ -28,12 +28,17 @@ function Save-Section {
 }
 
 Save-Section 'computer-system.txt' { Get-CimInstance Win32_ComputerSystem | Format-List * }
+Save-Section 'os.txt' {
+    Get-CimInstance Win32_OperatingSystem |
+        Format-List Caption, Version, BuildNumber, OSArchitecture, InstallDate, LastBootUpTime, LocalDateTime
+}
 Save-Section 'baseboard.txt' { Get-CimInstance Win32_BaseBoard | Format-List * }
 Save-Section 'bios.txt' { Get-CimInstance Win32_BIOS | Format-List * }
 Save-Section 'cpu.txt' { Get-CimInstance Win32_Processor | Format-List * }
 Save-Section 'memory.txt' { Get-CimInstance Win32_PhysicalMemory | Format-List * }
 
 Save-Section 'pagefile-and-dumps.txt' {
+    Get-CimInstance Win32_ComputerSystem | Format-List AutomaticManagedPagefile
     Get-CimInstance Win32_PageFileSetting | Format-List Name, InitialSize, MaximumSize
     Get-CimInstance Win32_PageFileUsage | Format-List Name, AllocatedBaseSize, CurrentUsage, PeakUsage
     Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CrashControl' |
@@ -51,13 +56,27 @@ Save-Section 'powercfg-lastwake.txt' { powercfg /lastwake }
 Save-Section 'powercfg-waketimers.txt' { powercfg /waketimers }
 Save-Section 'bitlocker-status.txt' { manage-bde -status C: }
 Save-Section 'problem-devices.txt' { pnputil /enum-devices /problem }
-Save-Section 'firmware-devices.txt' { Get-PnpDevice -Class Firmware | Format-List * }
+Save-Section 'firmware-devices.txt' {
+    Get-PnpDevice -Class Firmware |
+        Format-List FriendlyName, Status, Class, InstanceId, Problem, ConfigManagerErrorCode
+}
+Save-Section 'published-drivers.txt' { pnputil /enum-drivers }
 
 Save-Section 'interesting-services.txt' {
     Get-Service | Where-Object {
         $_.Name -match 'XTU|Cx|Conex|WirelessButton|HP' -or
         $_.DisplayName -match 'XTU|Conex|Wireless Button|HP'
     } | Sort-Object Name | Format-Table -AutoSize
+}
+
+Save-Section 'interesting-drivers.txt' {
+    Get-CimInstance Win32_SystemDriver | Where-Object {
+        $_.Name -match 'XTU|Cx|Conex|HP|Intel' -or
+        $_.DisplayName -match 'XTU|Conex|HP|Intel' -or
+        $_.PathName -match 'XTU|Conex|Cx|HP'
+    } | Sort-Object Name |
+        Select-Object Name, DisplayName, State, StartMode, PathName |
+        Format-Table -AutoSize
 }
 
 $start = (Get-Date).AddHours(-1 * $EventHours)
