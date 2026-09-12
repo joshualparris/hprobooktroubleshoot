@@ -1,9 +1,11 @@
 # Raw troubleshooting evidence can contain credentials and personal data.
 evidence/raw/
 
-# Local collection output
+# Local collection and generated diagnostic output
 collection-*/
 HPProBook-*/
+crash-doctor-report.md
+crash-doctor-report.json
 *.dmp
 *.etl
 
