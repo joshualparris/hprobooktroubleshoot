@@ -21,8 +21,10 @@ public sealed class PreflightService
             OperatingSystem.IsWindows() ? Environment.OSVersion.VersionString : "Windows Crash Doctor requires Windows.", blocking: true);
 
         var admin = IsAdministrator();
-        Add("administrator", "Administrator rights", admin ? "healthy" : "degraded",
-            admin ? "Running elevated." : "Some collectors require elevation; the app will request it when a full diagnosis starts.");
+        Add("privilege-model", "Privilege boundary", "healthy",
+            admin
+                ? "Desktop process is already elevated; collection can proceed without another UAC prompt."
+                : "Desktop process is standard-user; only the read-only evidence collector will request elevation.");
 
         try
         {
@@ -57,7 +59,7 @@ public sealed class PreflightService
             Add("output", "Evidence output", "unavailable", "Output directory is not writable: " + ex.Message, blocking: true);
         }
 
-        Add("history", "SQLite run ledger", history.CheckHealth(out var historyDetail) ? "healthy" : "unavailable", historyDetail);
+        Add("history", "SQLite run ledger", history.CheckHealth(out var historyDetail) ? "healthy" : "degraded", historyDetail);
 
         var ps = await runner.RunCommandAsync("$PSVersionTable.PSVersion.ToString()", cancellationToken: cancellationToken,
             options: new ProcessRunOptions(TimeSpan.FromSeconds(12), OperationId: "preflight.powershell"));

@@ -4,14 +4,17 @@
 [CmdletBinding()]
 param(
     [string]$OutputRoot = ([Environment]::GetFolderPath('Desktop')),
-    [int]$EventHours = 6,
-    [string]$SensorCsvPath
+    [ValidateRange(1, 168)] [int]$EventHours = 6,
+    [string]$SensorCsvPath,
+    [string]$ResultPathFile
 )
 
 $ErrorActionPreference = 'Continue'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$out = Join-Path -Path $OutputRoot -ChildPath "HPProBook-$stamp"
+$collectionId = [guid]::NewGuid().ToString('N')
+$out = Join-Path -Path $OutputRoot -ChildPath ("HPProBook-{0}-{1}" -f $stamp, $collectionId.Substring(0, 8))
 New-Item -ItemType Directory -Path $out -Force | Out-Null
+$out = (Resolve-Path -LiteralPath $out).Path
 
 function Save-Section {
     param(
@@ -134,10 +137,9 @@ if (-not [string]::IsNullOrWhiteSpace($SensorCsvPath)) {
 
 $metadataPath = Join-Path -Path $out -ChildPath 'collection-metadata.txt'
 $metadata = [ordered]@{
+    CollectionId       = $collectionId
     CollectedAtLocal   = (Get-Date).ToString('o')
     EventHours         = $EventHours
-    ComputerName       = $env:COMPUTERNAME
-    UserName           = $env:USERNAME
     OutputDirectory    = $out
     SensorCsvAttached  = $sensorCsvAttached
     SensorCsvSource    = $sensorCsvSourceName
@@ -145,6 +147,14 @@ $metadata = [ordered]@{
 $metadata.GetEnumerator() | ForEach-Object {
     '{0}={1}' -f $_.Key, $_.Value
 } | Out-File -FilePath $metadataPath -Encoding utf8
+
+if (-not [string]::IsNullOrWhiteSpace($ResultPathFile)) {
+    $resultParent = Split-Path -Parent $ResultPathFile
+    if (-not [string]::IsNullOrWhiteSpace($resultParent)) {
+        New-Item -ItemType Directory -Path $resultParent -Force | Out-Null
+    }
+    $out | Set-Content -LiteralPath $ResultPathFile -Encoding utf8 -Force
+}
 
 Write-Host "Saved diagnostic snapshot to $out"
 if (-not $sensorCsvAttached) {

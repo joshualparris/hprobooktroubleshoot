@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 
@@ -42,6 +43,8 @@ public sealed record ProcessResult(
 
 public sealed class PowerShellRunner
 {
+    private const int MaxCapturedCharacters = 8 * 1024 * 1024;
+    private static readonly TimeSpan MaximumTimeout = TimeSpan.FromHours(2);
     private readonly RedactionService _redaction = new();
 
     public async Task<ProcessResult> RunFileAsync(
@@ -51,12 +54,13 @@ public sealed class PowerShellRunner
         CancellationToken cancellationToken = default,
         ProcessRunOptions? options = null)
     {
-        var psi = CreatePowerShellStartInfo();
+        ArgumentException.ThrowIfNullOrWhiteSpace(scriptPath);
+        var effectiveOptions = ValidateOptions(options ?? ProcessRunOptions.Default);
+        var psi = CreatePowerShellStartInfo(redirectOutput: true);
         psi.ArgumentList.Add("-File");
         psi.ArgumentList.Add(scriptPath);
-        if (arguments is not null)
-            foreach (var argument in arguments) psi.ArgumentList.Add(argument);
-        return await RunWithPolicyAsync(psi, onOutput, cancellationToken, options ?? ProcessRunOptions.Default);
+        AddArguments(psi, arguments);
+        return await RunWithPolicyAsync(psi, onOutput, cancellationToken, effectiveOptions);
     }
 
     public async Task<ProcessResult> RunCommandAsync(
@@ -65,26 +69,102 @@ public sealed class PowerShellRunner
         CancellationToken cancellationToken = default,
         ProcessRunOptions? options = null)
     {
-        var psi = CreatePowerShellStartInfo();
+        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+        var effectiveOptions = ValidateOptions(options ?? ProcessRunOptions.Default);
+        var psi = CreatePowerShellStartInfo(redirectOutput: true);
         psi.ArgumentList.Add("-Command");
         psi.ArgumentList.Add(command);
-        return await RunWithPolicyAsync(psi, onOutput, cancellationToken, options ?? ProcessRunOptions.Default);
+        return await RunWithPolicyAsync(psi, onOutput, cancellationToken, effectiveOptions);
     }
 
-    private static ProcessStartInfo CreatePowerShellStartInfo()
+    public async Task<ProcessResult> RunFileElevatedAsync(
+        string scriptPath,
+        IEnumerable<string>? arguments = null,
+        CancellationToken cancellationToken = default,
+        ProcessRunOptions? options = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(scriptPath);
+        var effectiveOptions = ValidateOptions(options ?? ProcessRunOptions.Default);
+        var started = DateTimeOffset.UtcNow;
+        var psi = CreatePowerShellStartInfo(redirectOutput: false);
+        psi.UseShellExecute = true;
+        psi.Verb = "runas";
+        psi.CreateNoWindow = false;
+        psi.ArgumentList.Add("-File");
+        psi.ArgumentList.Add(scriptPath);
+        AddArguments(psi, arguments);
+
+        using var process = new Process { StartInfo = psi };
+        try
+        {
+            if (!process.Start())
+                return CreateResult(-1, ProcessExecutionStatus.Unavailable, "Elevated collector could not be started.", started);
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            return CreateResult(-1, ProcessExecutionStatus.Cancelled, "Administrator permission was not granted.", started);
+        }
+        catch (Exception ex)
+        {
+            return CreateResult(-1, ProcessExecutionStatus.Unavailable, _redaction.RedactForLog(ex.Message), started);
+        }
+
+        using var timeoutCts = new CancellationTokenSource(effectiveOptions.Timeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        try
+        {
+            await process.WaitForExitAsync(linkedCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            KillTree(process);
+            var state = cancellationToken.IsCancellationRequested
+                ? ProcessExecutionStatus.Cancelled
+                : ProcessExecutionStatus.TimedOut;
+            var reason = state == ProcessExecutionStatus.Cancelled
+                ? "Operation cancelled."
+                : $"Operation exceeded timeout of {effectiveOptions.Timeout}.";
+            return CreateResult(-1, state, reason, started);
+        }
+
+        var exitCode = process.ExitCode;
+        return CreateResult(
+            exitCode,
+            exitCode == 0 ? ProcessExecutionStatus.Completed : ProcessExecutionStatus.FailedPermanent,
+            exitCode == 0 ? null : $"Elevated collector exited with code {exitCode}.",
+            started);
+    }
+
+    private static ProcessStartInfo CreatePowerShellStartInfo(bool redirectOutput)
     {
         var psi = new ProcessStartInfo
         {
             FileName = "powershell.exe",
             UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
+            RedirectStandardOutput = redirectOutput,
+            RedirectStandardError = redirectOutput,
+            CreateNoWindow = redirectOutput
         };
         psi.ArgumentList.Add("-NoProfile");
         psi.ArgumentList.Add("-ExecutionPolicy");
         psi.ArgumentList.Add("Bypass");
         return psi;
+    }
+
+    private static void AddArguments(ProcessStartInfo psi, IEnumerable<string>? arguments)
+    {
+        if (arguments is null) return;
+        foreach (var argument in arguments)
+            psi.ArgumentList.Add(argument ?? throw new ArgumentException("PowerShell arguments cannot contain null values.", nameof(arguments)));
+    }
+
+    private static ProcessRunOptions ValidateOptions(ProcessRunOptions options)
+    {
+        if (options.Timeout <= TimeSpan.Zero || options.Timeout > MaximumTimeout)
+            throw new ArgumentOutOfRangeException(nameof(options), $"Timeout must be greater than zero and no more than {MaximumTimeout.TotalHours:0} hours.");
+        if (options.MaxRetries is < 0 or > 5)
+            throw new ArgumentOutOfRangeException(nameof(options), "MaxRetries must be between 0 and 5.");
+        return options;
     }
 
     private async Task<ProcessResult> RunWithPolicyAsync(
@@ -103,7 +183,10 @@ public sealed class PowerShellRunner
 
             var delayMs = Math.Min(8000, (int)Math.Pow(2, attempt - 1) * 500) + Random.Shared.Next(0, 251);
             onOutput?.Invoke($"Transient diagnostic failure; retrying attempt {attempt + 1}/{attempts} after {delayMs} ms.");
-            try { await Task.Delay(delayMs, cancellationToken); }
+            try
+            {
+                await Task.Delay(delayMs, cancellationToken);
+            }
             catch (OperationCanceledException)
             {
                 return latest with { Status = ProcessExecutionStatus.Cancelled, FailureReason = "Operation cancelled before retry." };
@@ -142,9 +225,9 @@ public sealed class PowerShellRunner
         {
             while (true)
             {
-                var line = await reader.ReadLineAsync();
+                var line = await reader.ReadLineAsync(linkedCts.Token);
                 if (line is null) break;
-                destination.AppendLine(line);
+                AppendBounded(destination, line);
                 onOutput?.Invoke(error ? $"ERROR: {_redaction.RedactForLog(line)}" : _redaction.RedactForLog(line));
             }
         }
@@ -154,23 +237,31 @@ public sealed class PowerShellRunner
         try
         {
             await process.WaitForExitAsync(linkedCts.Token);
+            await Task.WhenAll(stdoutTask, stderrTask);
         }
         catch (OperationCanceledException)
         {
             KillTree(process);
-            try { await process.WaitForExitAsync(); } catch { }
+            try
+            {
+                await process.WaitForExitAsync();
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"PowerShell cleanup wait failed: {ex.Message}");
+            }
         }
-        await Task.WhenAll(stdoutTask, stderrTask);
 
         var finished = DateTimeOffset.UtcNow;
-        var redactedError = _redaction.RedactForLog(stderr.ToString());
+        var rawError = stderr.ToString();
+        var redactedError = _redaction.RedactForLog(rawError);
         var exitCode = process.HasExited ? process.ExitCode : -1;
         var status = cancellationToken.IsCancellationRequested
             ? ProcessExecutionStatus.Cancelled
             : timeoutCts.IsCancellationRequested
                 ? ProcessExecutionStatus.TimedOut
                 : exitCode == 0
-                    ? (string.IsNullOrWhiteSpace(stderr.ToString()) ? ProcessExecutionStatus.Completed : ProcessExecutionStatus.CompletedWithWarnings)
+                    ? (string.IsNullOrWhiteSpace(rawError) ? ProcessExecutionStatus.Completed : ProcessExecutionStatus.CompletedWithWarnings)
                     : ClassifyFailure(redactedError);
         var reason = status switch
         {
@@ -180,7 +271,7 @@ public sealed class PowerShellRunner
             ProcessExecutionStatus.CompletedWithWarnings => redactedError,
             _ => string.IsNullOrWhiteSpace(redactedError) ? $"Process exited with code {exitCode}." : redactedError
         };
-        return new ProcessResult(exitCode, stdout.ToString(), stderr.ToString(), status, started, finished, finished - started, attempt, reason);
+        return new ProcessResult(exitCode, stdout.ToString(), rawError, status, started, finished, finished - started, attempt, reason);
 
         ProcessResult Result(int code, ProcessExecutionStatus state, string? reason)
         {
@@ -189,7 +280,18 @@ public sealed class PowerShellRunner
         }
     }
 
-    private static bool IsRetryable(ProcessResult result) => result.Status is ProcessExecutionStatus.TimedOut or ProcessExecutionStatus.FailedRetryable;
+    private static void AppendBounded(StringBuilder destination, string line)
+    {
+        if (destination.Length >= MaxCapturedCharacters) return;
+        var remaining = MaxCapturedCharacters - destination.Length;
+        if (line.Length + Environment.NewLine.Length <= remaining)
+            destination.AppendLine(line);
+        else if (remaining > 0)
+            destination.Append(line.AsSpan(0, Math.Min(line.Length, remaining)));
+    }
+
+    private static bool IsRetryable(ProcessResult result) =>
+        result.Status is ProcessExecutionStatus.TimedOut or ProcessExecutionStatus.FailedRetryable;
 
     private static ProcessExecutionStatus ClassifyFailure(string error)
     {
@@ -199,8 +301,21 @@ public sealed class PowerShellRunner
             : ProcessExecutionStatus.FailedPermanent;
     }
 
+    private static ProcessResult CreateResult(int exitCode, ProcessExecutionStatus status, string? reason, DateTimeOffset started)
+    {
+        var finished = DateTimeOffset.UtcNow;
+        return new ProcessResult(exitCode, "", "", status, started, finished, finished - started, 1, reason);
+    }
+
     private static void KillTree(Process process)
     {
-        try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+        try
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"Process cleanup failed: {ex.Message}");
+        }
     }
 }
