@@ -5,7 +5,7 @@ namespace WindowsCrashDoctor.Services;
 
 public sealed class EngineExtractor
 {
-    public const string EngineVersion = "0.2.0";
+    public const string EngineVersion = "0.3.0";
 
     private static readonly IReadOnlyDictionary<string, string> Resources =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -16,6 +16,8 @@ public sealed class EngineExtractor
             ["WCD.Engine.windows-crash-doctor.TelemetryAnalysis.psm1"] = Path.Combine("windows-crash-doctor", "TelemetryAnalysis.psm1"),
             ["WCD.Engine.windows-crash-doctor.DumpParser.psm1"] = Path.Combine("windows-crash-doctor", "DumpParser.psm1"),
             ["WCD.Engine.windows-crash-doctor.Invoke-CrashDoctor.ps1"] = Path.Combine("windows-crash-doctor", "Invoke-CrashDoctor.ps1"),
+            ["WCD.Engine.windows-crash-doctor.DiagnosticRegistry.psm1"] = Path.Combine("windows-crash-doctor", "DiagnosticRegistry.psm1"),
+            ["WCD.Engine.windows-crash-doctor.diagnostics.registry.json"] = Path.Combine("windows-crash-doctor", "diagnostics", "registry.json"),
             ["WCD.Engine.windows-crash-doctor.Integrations.psm1"] = Path.Combine("windows-crash-doctor", "Integrations.psm1"),
             ["WCD.Engine.windows-crash-doctor.Manage-Integrations.ps1"] = Path.Combine("windows-crash-doctor", "Manage-Integrations.ps1"),
             ["WCD.Engine.windows-crash-doctor.version.json"] = Path.Combine("windows-crash-doctor", "version.json"),
@@ -28,6 +30,7 @@ public sealed class EngineExtractor
     public string TelemetryPath => Path.Combine(RootPath, "windows-crash-doctor", "TelemetryAnalysis.psm1");
     public string IntegrationManagerPath => Path.Combine(RootPath, "windows-crash-doctor", "Manage-Integrations.ps1");
     public string VersionPath => Path.Combine(RootPath, "windows-crash-doctor", "version.json");
+    public string RegistryPath => Path.Combine(RootPath, "windows-crash-doctor", "diagnostics", "registry.json");
 
     public EngineExtractor()
     {
