@@ -1,10 +1,34 @@
-# Conversation records
+# Conversation-record provenance
 
-The two supplied conversation records are preserved in the complete sandbox evidence archive documented under `raw/README.md`:
+Conversation records are **supporting context**, not machine telemetry.
 
-- `HP_ProBook_11_G2_conversation_export_2026-09-12.md` — ChatGPT troubleshooting export, with the exposed BitLocker recovery password redacted.
-- `Untitled document.PDF` — the supplied Claude troubleshooting conversation.
+The two supplied records were preserved in the complete troubleshooting workspace archive documented in [`../raw/README.md`](../raw/README.md):
 
-The GitHub connector in this session cannot accept local files directly. Attempts to route large binary/base64 files through the text interface were deliberately abandoned rather than risk committing truncated/corrupt evidence. The original files' sizes and SHA-256 hashes are in `evidence/manifests/evidence-manifest.csv`.
+- `HP_ProBook_11_G2_conversation_export_2026-09-12.md` — ChatGPT troubleshooting export with the exposed BitLocker recovery password redacted.
+- `Untitled document.PDF` — supplied Claude troubleshooting conversation.
 
-The substantive conclusions and disagreements between the two analyses are captured in `analysis/MASTER_ANALYSIS.md` and `analysis/CLAUDE_COMPARISON.md`.
+Their filenames, sizes and SHA-256 values were recorded in `../evidence/manifests/evidence-manifest.csv`.
+
+## Why the full files are not reproduced here
+
+Large/binary conversation artefacts were not pushed through a text interface because truncation could create a corrupt record while appearing successful.
+
+## How conversation claims should be used
+
+A transcript can establish:
+- what a user reported;
+- what command was suggested;
+- what another analysis session concluded.
+
+It does **not** independently prove:
+- that a command actually executed;
+- that a later machine state still matches the transcript;
+- that a causal theory in the conversation was correct.
+
+Important transcript claims should therefore be re-captured from the machine when possible.
+
+The substantive reconciliation is in:
+- [`../analysis/MASTER_ANALYSIS.md`](../analysis/MASTER_ANALYSIS.md)
+- [`../analysis/CLAUDE_COMPARISON.md`](../analysis/CLAUDE_COMPARISON.md)
+
+For the current operational state use [`../analysis/STATUS.md`](../analysis/STATUS.md).

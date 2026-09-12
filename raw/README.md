@@ -1,14 +1,16 @@
-# Raw evidence
+# Raw evidence and archive boundary
 
-This directory is for original diagnostic evidence and integrity records.
+This directory documents original diagnostic evidence and the integrity boundary between what is actually committed to Git and what existed only in the troubleshooting workspace.
 
-Currently committed directly:
+## Directly committed raw item
 
 - `battery-report.html.gz`
 
-## Complete archives built in the ChatGPT working sandbox
+No other large raw archive should be assumed to exist in Git merely because its filename is documented here.
 
-A lossless `tar.gz` archive containing every mounted user evidence file from the troubleshooting conversation was created as:
+## Complete archives created in the troubleshooting workspace
+
+A lossless tar archive was created as:
 
 `hprobook-evidence-all.tar.gz`
 
@@ -16,7 +18,7 @@ SHA-256:
 
 `f9c98db4983be8b8ff7b95a7a1e7251e44af2dde01a2fb9b12997fb835124aa8`
 
-A Windows-friendly ZIP containing the same mounted evidence set was also created as:
+A Windows-friendly ZIP of the same mounted evidence set was created as:
 
 `hprobook-evidence-all.zip`
 
@@ -24,12 +26,27 @@ SHA-256:
 
 `2d78d3166c4be0b1dccf8f5b0aa13e0961dd41eec04f15c591d3488e23bc374d`
 
-The archives contain the EVTX originals and their duplicate uploads, all mounted screenshots, `1111.txt` copies, `setupapi.dev.log`, battery/system-power reports, the supplied Claude PDF and the redacted ChatGPT conversation export.
+These hashes are integrity records for those workspace artefacts. They do **not** claim that the archives are currently retrievable from this Git repository.
 
-## Why the large raw archive is not committed directly
+The archives covered the mounted EVTX files (including duplicate uploads), screenshots, text files, SetupAPI log, battery/system-power reports, supplied Claude PDF and redacted ChatGPT conversation export.
 
-The GitHub connector available in this session does not accept a local sandbox file as an upload parameter. Routing tens of megabytes of binary EVTX/image/archive data through model text risks truncation or corruption, so the investigation deliberately does **not** claim those raw binaries are in Git when they are not.
+## Why the large archive is not committed
 
-The original conversation files are likewise referenced by exact size/SHA-256 in `evidence/manifests/evidence-manifest.csv`; `conversation/README.md` explains their archive status.
+Routing tens of megabytes of binary evidence through a text-only connector risks truncation/corruption. The investigation therefore preserves truthful boundaries rather than claiming a binary upload succeeded when it did not.
 
-**Security:** raw evidence includes hardware identifiers and this repository is public. The BitLocker recovery password exposed during troubleshooting is intentionally redacted/excluded and should be rotated.
+The committed manifest at `../evidence/manifests/evidence-manifest.csv` records filename/size/SHA-256 information for the evidence set available to that session.
+
+## If the archive is re-materialised later
+
+Before trusting it:
+1. calculate SHA-256;
+2. compare it with the recorded hash above;
+3. store it privately;
+4. do not add it to public Git without a deliberate security review;
+5. generate reviewed extracts instead of publishing the whole archive where possible.
+
+## Crash Doctor relationship
+
+Future Crash Doctor dump, ETW, ProcMon and WER artefacts should follow the same rule: preserve private originals, manifest them, and publish only what is necessary.
+
+See [`../evidence/README.md`](../evidence/README.md) and [`../SECURITY_NOTICE.md`](../SECURITY_NOTICE.md).

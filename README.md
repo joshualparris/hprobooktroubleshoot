@@ -1,142 +1,155 @@
-# HP ProBook 11 G2 hard-freeze investigation
+# HP ProBook 11 G2 hard-freeze investigation + Windows Crash Doctor
 
-Evidence-driven troubleshooting of an HP ProBook 11 G2 that began hard-freezing immediately after purchase in September 2026.
+This repository serves two related purposes:
 
-The goal is to separate **observed evidence**, **current-machine telemetry**, **inherited Windows-image history** and **mechanism hypotheses**, then change one major variable at a time.
+1. preserve an evidence-driven investigation of an HP ProBook 11 G2 that hard-freezes; and
+2. develop **Windows Crash Doctor**, a reusable Windows crash/hang triage tool grown from that investigation.
 
-## Current machine
+The core rule is simple: keep **observation**, **current-machine telemetry**, **inherited image history**, **interpretation** and **causality** separate. Change one major variable at a time.
 
-- HP ProBook 11 G2 / board 818F
-- Intel Core i3-6100U, 2C/4T, 2.30 GHz
-- Intel HD Graphics 520
-- 4 GB SK Hynix HMA451S6AFR8N-TF DDR4-2133, single-channel
-- Samsung MZNTY128HDHP-000H1 128 GB SATA SSD
-- BIOS N92 Ver. 01.04, 2 Nov 2016
-- Windows 11 Pro 24H2 on an unsupported CPU/TPM configuration
+## Project status
 
-## Symptom
+**Current `main`:**
+- reproducible Windows diagnostic collector;
+- read-only Crash Doctor snapshot analyser;
+- Markdown + JSON reports;
+- synthetic Windows regression tests;
+- public-evidence/BitLocker recovery-key guard;
+- documented HP ProBook evidence and controlled test plan.
 
-The machine has produced genuine whole-system hard hangs with the display still lit/frozen and no recorded BSOD. Recovery required holding the power button. The two current September incidents occurred within minutes of resuming from S4 / Fast Startup-style hybrid shutdown sessions.
+**Not yet implemented on `main`:**
+- native dump parsing and symbol resolution;
+- ETW/WPR-style tracing;
+- trigger-based process dump capture;
+- persistent incident database/deduplication;
+- graphical timeline;
+- remote retracing/reporting integrations.
 
-## What is established
+Those gaps are now tracked individually in the **[100-item Windows Crash Doctor roadmap](docs/ROADMAP_100.md)**, derived from a benchmark against ten established diagnostic tools.
 
-1. HP quick memory test passed; SSD SMART and Short DST passed.
-2. Windows storage reliability counters do not currently show convincing SSD failure evidence.
-3. Physical BIOS is still N92 01.04 from 2016.
-4. Windows recorded an `HP N92 System Firmware 01.60` device in Code 10 / failed-start state. A later transcript reports that package was removed and the firmware resource returned to OK, but that post-removal state still needs an independent capture.
-5. SetupAPI proves the delivered Windows installation was Sysprep-respecialised on this ProBook and retained 154 non-present devices, including previous HP hardware and multiple prior storage devices.
-6. Intel XTU components are present and started on the current installation; a non-default voltage/tuning state has **not** yet been proven.
-7. `powercfg /h off` has disabled hibernation and Fast Startup for the current controlled A/B test.
-8. `volmgr 161` dump failures are not good evidence of storage failure while pagefile/dump configuration is inadequate.
+## Quick start
 
-## Current working model
+Open an elevated Windows PowerShell prompt in the repository.
 
-The best-supported problem family is **firmware / power-state / low-level OEM-driver interaction on a reused refurb Windows image**.
+### 1. Collect a snapshot
 
-That is deliberately broader than saying “the failed firmware capsule is the root cause”. The capsule abnormality is real, but the specific SMI/SMM-hang mechanism remains a hypothesis rather than a logged fact.
+```powershell
+.\scripts\collect-diagnostics.ps1
+```
 
-See [`analysis/MASTER_ANALYSIS.md`](analysis/MASTER_ANALYSIS.md) for the detailed reasoning and [`analysis/STATUS.md`](analysis/STATUS.md) for the short operational view.
+The collector creates a timestamped `HPProBook-*` folder on the Desktop by default. It is designed to collect evidence, not change system settings.
 
-## Working diagnostic engine
-
-The repository now includes **Windows Crash Doctor**, a read-only PowerShell rule engine that analyses a collector snapshot and produces both Markdown and JSON reports.
+### 2. Analyse it
 
 ```powershell
 .\windows-crash-doctor\Invoke-CrashDoctor.ps1 `
   -EvidencePath "$env:USERPROFILE\Desktop\HPProBook-YYYYMMDD-HHMMSS"
 ```
 
-It currently detects the evidence patterns that matter most in this case — firmware Code 10, current firmware-resource state, Sysprep/reused-image history, XTU/Conexant presence, dump-capture risk, storage counters, BitLocker conversion context, WHEA, Event 41 and volmgr 161 — while keeping **evidence**, **interpretation**, **confidence** and **next step** separate.
+Crash Doctor writes:
 
-See [`windows-crash-doctor/README.md`](windows-crash-doctor/README.md) and [`docs/WINDOWS_CRASH_DOCTOR_PLAN.md`](docs/WINDOWS_CRASH_DOCTOR_PLAN.md).
+- `crash-doctor-report.md` — human-readable findings;
+- `crash-doctor-report.json` — machine-readable output.
 
-A repository-wide CI guard also blocks accidental commits containing a BitLocker-style 48-digit recovery password.
+### 3. Run the regression test
 
-## Current test sequence
+```powershell
+.\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
+```
+
+## Windows Crash Doctor today
+
+The current rule engine understands evidence relevant to this case, including:
+
+- firmware-class failed-start / Code 10 state;
+- current firmware resource state;
+- Sysprep/generalised/reused-image history;
+- retained non-present devices;
+- Intel XTU and Conexant stack presence;
+- BitLocker conversion context;
+- hibernation/Fast Startup state;
+- pagefile/crash-dump capture readiness;
+- Windows storage reliability counters;
+- WHEA references;
+- Kernel-Power Event 41;
+- volmgr Event 161.
+
+Each finding keeps **severity**, **confidence**, **evidence**, **interpretation** and **next step** separate.
+
+It does **not** silently flash firmware, remove drivers, disable security, change BitLocker, alter pagefile/dump policy or upload private diagnostic data.
+
+## Documentation
+
+| Document | Purpose |
+|---|---|
+| [`docs/README.md`](docs/README.md) | Documentation map and authority rules |
+| [`windows-crash-doctor/README.md`](windows-crash-doctor/README.md) | Current Crash Doctor usage and behaviour |
+| [`docs/WINDOWS_CRASH_DOCTOR_PLAN.md`](docs/WINDOWS_CRASH_DOCTOR_PLAN.md) | Architecture and product design |
+| [`docs/COMPARABLE_TOOLS_RESEARCH.md`](docs/COMPARABLE_TOOLS_RESEARCH.md) | Ten-tool benchmark and research sources |
+| [`docs/ROADMAP_100.md`](docs/ROADMAP_100.md) | Canonical 100-item upgrade backlog |
+| [`analysis/STATUS.md`](analysis/STATUS.md) | Current ProBook operational status |
+| [`analysis/TEST_PLAN.md`](analysis/TEST_PLAN.md) | One-variable-at-a-time ProBook test sequence |
+| [`analysis/MASTER_ANALYSIS.md`](analysis/MASTER_ANALYSIS.md) | Detailed investigation reasoning |
+| [`evidence/README.md`](evidence/README.md) | Evidence provenance/redaction workflow |
+| [`SECURITY_NOTICE.md`](SECURITY_NOTICE.md) | Security and privacy requirements |
+
+## HP ProBook case
+
+### Machine
+
+- HP ProBook 11 G2 / board 818F
+- Intel Core i3-6100U
+- Intel HD Graphics 520
+- 4 GB DDR4-2133
+- Samsung 128 GB SATA SSD
+- BIOS N92 01.04 dated 2 November 2016
+- Windows 11 Pro 24H2 on an unsupported CPU/TPM configuration
+
+### Symptom
+
+The machine has produced whole-system hard hangs with the display still lit/frozen and no useful recorded BSOD. Recovery required holding the power button. The current September incidents clustered soon after S4/Fast Startup-style resume.
+
+### Strongest established facts
+
+- HP quick memory testing and SSD SMART/Short DST passed.
+- Current Windows storage counters do not provide strong evidence of straightforward SSD failure.
+- Physical BIOS is old.
+- Windows recorded an HP N92 firmware device in a failed-start/Code 10 state.
+- SetupAPI proves the delivered Windows image was Sysprep-respecialised and retained substantial previous-hardware state.
+- Intel XTU components are present; a non-default tuning state has not yet been proven.
+- Hibernation/Fast Startup was disabled as a controlled A/B test.
+- Existing `volmgr 161` failures cannot be treated as storage proof while dump/pagefile configuration is inadequate.
+
+The current working problem family remains **firmware/power-state/low-level OEM-driver interaction on a reused refurb Windows image**. That is a hypothesis family, not a confirmed root cause.
+
+## Current ProBook test order
 
 1. Capture current post-change state.
 2. Measure stability with hibernation/Fast Startup disabled.
-3. Inspect XTU settings without changing them.
+3. Inspect XTU without changing values.
 4. Make crash-dump capture trustworthy.
 5. Run MemTest86 if instability persists.
-6. Update BIOS directly using HP's official N92 path once recovery-key safety and power are assured.
-7. Isolate the delivered Windows image with a clean OS/live environment if needed.
-8. If updated firmware + clean OS + known-good RAM still hard-freeze, use the return/warranty path.
+6. Update BIOS through HP's official N92 path once recovery-key safety and power are assured.
+7. Isolate the supplied Windows image with a clean OS/live environment if required.
+8. If updated firmware + clean OS + known-good RAM still freeze, use the return/warranty path.
 
-The detailed staged plan is in [`analysis/TEST_PLAN.md`](analysis/TEST_PLAN.md).
-
-## Reproducible collection
-
-Run from an elevated PowerShell prompt for the most complete snapshot:
-
-```powershell
-.\scripts\collect-diagnostics.ps1
-```
-
-The collector writes a timestamped folder on the Desktop by default with hardware, OS/boot time, firmware, problem-device, storage, pagefile/dump, BitLocker, power-state, driver, SetupAPI, battery/system-power reports and recent Windows event evidence. It does not deliberately change machine settings.
-
-To hash a private evidence folder and identify duplicates:
-
-```powershell
-.\scripts\hash-evidence.ps1 -InputPath .\evidence\raw -OutputCsv .\evidence\manifests\evidence-manifest.csv
-```
-
-The current supplied-file inventory is committed at [`evidence/manifests/evidence-manifest.csv`](evidence/manifests/evidence-manifest.csv). It records filenames, sizes, SHA-256 hashes and duplicate groups; the large raw binary originals are not part of this public repo.
-
-Review [`SECURITY_NOTICE.md`](SECURITY_NOTICE.md) before publishing any logs, screenshots or reports.
+See [`analysis/TEST_PLAN.md`](analysis/TEST_PLAN.md) before changing anything.
 
 ## Repository layout
 
 ```text
-analysis/
-  MASTER_ANALYSIS.md       detailed evidence synthesis
-  STATUS.md                current state and next decision
-  HYPOTHESIS_REGISTER.md   evidence for/against candidate causes
-  EVIDENCE_TIMELINE.md     current vs inherited-history timeline
-  CLAUDE_COMPARISON.md     reconciliation with the other analysis session
-  TEST_PLAN.md             staged one-variable-at-a-time test plan
-  RAW_EVIDENCE_STATUS.md   what is committed vs archived outside Git
-
-conversation/
-  README.md                integrity/archive status for conversation records
-
-evidence/
-  README.md                evidence handling and provenance workflow
-  manifests/
-    evidence-manifest.csv  committed SHA-256 inventory/duplicate mapping
-  raw/                     private/unreviewed originals (gitignored)
-  extracts/                reviewed/redacted extracts when deliberately added
-
-raw/
-  README.md                complete archive names/hashes and upload boundary
-  battery-report.html.gz   small directly committed raw-report sample
-
-scripts/
-  collect-diagnostics.ps1     consolidated repeatable diagnostic snapshot
-  hash-evidence.ps1           SHA-256 manifest + duplicate detection
-  check-public-evidence.ps1   narrow public-repo secret guard
-
-windows-crash-doctor/
-  CrashDoctor.psm1            evidence parser + rule engine
-  Invoke-CrashDoctor.ps1      CLI/report writer
-  tests/self-test.ps1         synthetic regression/self-test
-
-docs/
-  WINDOWS_CRASH_DOCTOR_PLAN.md architecture, rule contract and roadmap
-
-SECURITY_NOTICE.md          public-repository privacy/redaction rules
+analysis/                 ProBook case reasoning, status and controlled test plan
+conversation/             conversation-archive provenance notes
+docs/                     product architecture, research and roadmap
+evidence/                 evidence workflow and SHA-256 manifests
+raw/                      explicitly documented raw/archive boundary
+scripts/                  collection, hashing and public-evidence guard
+windows-crash-doctor/     current Crash Doctor engine, CLI and tests
+SECURITY_NOTICE.md        privacy/security rules
 ```
 
-## Important evidence corrections
+## Evidence and privacy
 
-- Historical `BootAppStatus = 0xC000007B` records do not prove the current September hang was caused by a firmware boot-app failure; the 12 Sep abnormal-shutdown session records `BootAppStatus = 0x0`.
-- `volmgr 161` dump-creation failures do not by themselves prove storage wedged; pagefile size/configuration can independently prevent useful dump capture.
-- Repeated `manage-bde` readings at 99% over a short interval do not prove BitLocker caused the hangs.
-- Battery evidence does not fit a simple power cut; the lit frozen display and forced-power recovery fit a true hang better.
-- The reused-image finding is concrete, but image reuse itself is not proof of causality.
+Raw logs are private by default. EVTX, ETL, WER files, dumps, `msinfo32`, SetupAPI, screenshots and memory dumps can contain usernames, hardware identifiers, network details, application state or secrets.
 
-## Raw evidence policy
-
-Raw EVTX files, reports, screenshots and conversation exports are **not assumed safe for a public Git repository**. The committed manifest preserves byte-level provenance without requiring those large/private originals to be public. [`raw/README.md`](raw/README.md) records the complete archive names and SHA-256 hashes, while [`analysis/RAW_EVIDENCE_STATUS.md`](analysis/RAW_EVIDENCE_STATUS.md) documents the archive boundary explicitly.
-
-**Never commit the exposed BitLocker recovery password or any replacement recovery key.**
+Never commit a BitLocker recovery password. Review [`SECURITY_NOTICE.md`](SECURITY_NOTICE.md) before publishing diagnostic artefacts.

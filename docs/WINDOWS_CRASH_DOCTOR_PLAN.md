@@ -1,26 +1,21 @@
-# Windows Crash Doctor plan
+# Windows Crash Doctor architecture and product plan
 
-## Purpose
+## Mission
 
-Windows Crash Doctor turns a `collect-diagnostics.ps1` snapshot into a compact, reproducible diagnostic report without making any machine changes.
+Windows Crash Doctor should answer four questions in order:
 
-The first target is this HP ProBook 11 G2 hard-freeze investigation, but the architecture is deliberately generic enough to grow into a reusable Windows crash/hang triage tool.
+1. **What actually happened?**
+2. **What evidence supports each explanation?**
+3. **What is the smallest test that separates the leading explanations?**
+4. **What changed after that test?**
 
-## Non-goals
+It should do this without turning suspicious events into automatic root-cause claims and without destroying evidence by changing multiple variables at once.
 
-Crash Doctor does not:
+The HP ProBook 11 G2 is the first golden case, not the architecture.
 
-- declare a root cause solely because one abnormal event exists;
-- treat `Kernel-Power 41` as the cause of a crash;
-- flash BIOS/UEFI;
-- uninstall drivers;
-- change BitLocker, pagefile, dump or power settings;
-- upload private logs automatically;
-- require third-party PowerShell modules.
+## Current implementation on `main`
 
-Those actions either mutate evidence or have enough risk that they should remain explicit.
-
-## Data flow
+Today the pipeline is snapshot-based:
 
 ```text
 Windows machine
@@ -28,11 +23,11 @@ Windows machine
     v
 scripts/collect-diagnostics.ps1
     |
-    +-- text snapshots
-    +-- recent EVTX exports
-    +-- SetupAPI
-    +-- battery/system power reports
-    +-- msinfo32 NFO
+    +-- hardware / OS / boot state
+    +-- firmware / PnP / driver state
+    +-- storage / dump / BitLocker state
+    +-- recent event text + EVTX
+    +-- SetupAPI + power reports
     |
     v
 windows-crash-doctor/Invoke-CrashDoctor.ps1
@@ -40,107 +35,279 @@ windows-crash-doctor/Invoke-CrashDoctor.ps1
     v
 CrashDoctor.psm1
     |
-    +-- inventory parsing
-    +-- rule evaluation
-    +-- evidence/confidence separation
-    +-- coverage accounting
+    +-- parse
+    +-- evaluate rules
+    +-- account for missing inputs
+    +-- keep evidence separate from interpretation
     |
     +--> crash-doctor-report.md
     +--> crash-doctor-report.json
 ```
 
-## Rule contract
+The current analyser is intentionally read-only and dependency-light.
 
-Every rule returns the same fields:
+## Target architecture
+
+The roadmap expands the product into five cooperating layers:
+
+```text
++-------------------------+
+| 1. Capture              |
+| snapshots, WER, dumps,  |
+| ETW, triggers, canary   |
++------------+------------+
+             |
+             v
++-------------------------+
+| 2. Evidence store       |
+| incidents, hashes,      |
+| provenance, retention   |
++------------+------------+
+             |
+             v
++-------------------------+
+| 3. Analysis             |
+| parsers, symbols,       |
+| rules, stacks, history  |
++------------+------------+
+             |
+             v
++-------------------------+
+| 4. Reasoning            |
+| hypotheses, confidence, |
+| dedupe, next test       |
++------------+------------+
+             |
+             v
++-------------------------+
+| 5. Presentation/action  |
+| report, timeline,       |
+| debugger/support export |
++-------------------------+
+```
+
+High-risk remediation remains outside the automatic analysis path.
+
+## Core data concepts
+
+### Evidence artefact
+
+A file or record captured from the system, with:
+- stable ID;
+- source;
+- capture timestamp;
+- machine/session/boot identity where known;
+- SHA-256 where applicable;
+- sensitivity classification;
+- parser status;
+- provenance links.
+
+### Incident
+
+A time-bounded failure or suspected failure:
+- hard freeze;
+- bugcheck/BSOD;
+- application crash;
+- application hang;
+- unexpected reboot;
+- WHEA/hardware error;
+- installer/update failure;
+- manually marked symptom.
+
+One incident may reference many evidence artefacts.
+
+### Finding
+
+A bounded diagnostic statement:
 
 | Field | Meaning |
 |---|---|
-| `Id` | stable machine-readable identifier |
-| `Severity` | operational priority, not certainty |
-| `Confidence` | confidence that the evidence/interpretation is valid |
-| `Title` | concise human label |
-| `Evidence` | what was actually observed |
-| `Interpretation` | what that evidence supports — no stronger |
+| `Id` | stable machine-readable rule ID |
+| `Severity` | operational priority |
+| `Confidence` | confidence in the interpretation |
+| `Evidence` | direct observations |
+| `Interpretation` | what those observations support |
+| `Contradictions` | evidence against the hypothesis |
+| `Unknowns` | missing discriminating evidence |
 | `NextStep` | smallest useful diagnostic action |
 
-A rule must not smuggle causality into the `Evidence` field.
+### Problem/signature
 
-## Current rule families
+A deduplicated cluster of incidents that appear to share a cause/signature. Repeated crashes should increase frequency statistics, not create 50 unrelated “root causes”.
 
-### Firmware / device state
+### Experiment
 
-Detects a firmware-class Code 10 / `CM_PROB_FAILED_START` state and can also record a current Firmware-class `Status: OK` post-change snapshot. A failed-start state is high-priority evidence, but it does not itself prove that firmware caused the hang.
+A controlled one-variable change with:
+- baseline;
+- single intended variable;
+- start/end time;
+- success criteria;
+- incident count before/after;
+- evidence bundle;
+- rollback/reversal notes.
 
-### Deployment-image history
+## Architecture rules
 
-Detects `Sysprep Respecialize` and records the largest non-present-device count found in SetupAPI. This identifies reused/generalised deployment history and helps prevent historical devices from being mistaken for current hardware.
+1. **Understand before changing.**
+2. **One source of truth per concept.**
+3. **Collection is not remediation.**
+4. **Historical state is not current state.**
+5. **Missing evidence is unknown.**
+6. **Aftermath events are not automatically causes.**
+7. **Profiles may add context; they may not fabricate evidence.**
+8. **Every automated conclusion must be explainable.**
+9. **Every risky action requires explicit approval.**
+10. **Privacy, retention and provenance are core data-model concerns.**
 
-### Power/tuning stack
+## Capture roadmap
 
-Detects Intel XTU and Conexant-related evidence. Presence is reported separately from proof of a non-default tuning profile or driver-triggered crash.
+The current collector remains the canonical broad snapshot source. Future capture mechanisms should complement it:
 
-### Crash-capture quality
+- Windows Error Reporting store and LocalDumps;
+- ProcDump-style triggers;
+- ETW/WPR circular traces;
+- early-boot tracing;
+- optional high-volume ProcMon-style traces;
+- native Windows dump discovery;
+- runtime-specific exception hooks;
+- a low-overhead always-on incident service.
 
-Reads pagefile/dump state and warns when future dump absence would be weak evidence.
+A capture mechanism must document overhead and storage limits before it can run continuously.
 
-### Storage
+## Analysis roadmap
 
-Reads Windows storage-reliability counters. Clean counters reduce the priority of a simple failing-SSD theory but never fully clear intermittent storage/controller faults.
+Analysis grows from text rules to:
+- minidump/kernel/full-dump parsers;
+- Microsoft symbol resolution;
+- bugcheck/exception knowledge;
+- call-stack and module analysis;
+- dump-time locks/waits;
+- WER signatures/buckets;
+- ETW timelines;
+- crash history, clustering and deduplication;
+- known-problem/issue-tracker matching.
 
-### Event evidence
+The full list is in [`ROADMAP_100.md`](ROADMAP_100.md).
 
-Summarises WHEA, Kernel-Power 41 and volmgr 161 from the collector's recent text event export. The rules deliberately distinguish “found” from “caused”.
+## Presentation roadmap
 
-## Output schema
+The product should eventually expose the same evidence through several surfaces:
 
-`crash-doctor-report.json` is the automation boundary. Top-level fields are:
+- CLI for deterministic automation;
+- Markdown for support/human review;
+- JSON for integrations;
+- local history browser;
+- timeline UI;
+- privacy-review/export wizard;
+- debugger hand-off;
+- issue/support bundle export.
 
-- `SchemaVersion`
-- `GeneratedAt`
-- `EvidencePath`
-- `Coverage`
-- `Inventory`
-- `EventSummary`
-- `Findings`
+The CLI and JSON schema remain the automation contract even if a GUI is added.
 
-New rule fields should be additive where possible so older consumers do not break.
+## Profile model
+
+Model-specific profiles can provide:
+- expected hardware identifiers;
+- vendor support links;
+- known firmware families;
+- expected driver/device names;
+- safe diagnostic commands;
+- case-specific warnings.
+
+Profiles must not mark a hypothesis as true merely because the machine matches a model.
 
 ## Testing strategy
 
-`tests/self-test.ps1` generates synthetic abnormal and quiet evidence folders rather than relying on private real-world logs. It verifies:
+The test pyramid should include:
 
-- expected rules fire;
-- high-severity false positives do not appear on the quiet fixture;
-- inventory parsing works, including multiple memory modules;
-- evidence-discipline language remains in the Markdown report;
-- CLI output files are created;
-- the repository public-evidence guard passes.
-
-CI runs on `windows-latest` because the production environment is Windows PowerShell.
+1. **Parser tests** for every input format.
+2. **Rule fixtures** with positive, negative and ambiguous examples.
+3. **Quiet-machine fixtures** to control false positives.
+4. **Golden incident fixtures** built from redacted real cases.
+5. **Schema compatibility tests**.
+6. **Windows integration tests** on supported PowerShell versions.
+7. **Performance/overhead tests** for continuous capture.
+8. **Privacy tests** for export/redaction.
+9. **Corruption/truncation tests** for partial evidence.
+10. **Upgrade tests** for persisted incident databases.
 
 ## Security model
 
-Raw troubleshooting evidence is private by default. The public repository stores analysis, manifests, reviewed extracts and tooling.
+Diagnostic data may contain:
+- process memory;
+- usernames;
+- command lines;
+- file paths;
+- network addresses;
+- serial numbers;
+- browser/application content;
+- credentials or recovery material.
 
-`scripts/check-public-evidence.ps1` blocks the strongest known accidental leak in this case: an eight-group BitLocker recovery password. It is intentionally documented as a narrow guard rather than a complete secret-scanning product.
+Defaults:
+- raw/private by default;
+- local processing by default;
+- no automatic upload;
+- least privilege where practical;
+- explicit retention;
+- access checks before reading another user's dump;
+- reviewed/redacted export.
 
-## Near-term roadmap
+See [`../SECURITY_NOTICE.md`](../SECURITY_NOTICE.md).
 
-1. Add an HWiNFO CSV analyser for thermal/power/time-series evidence.
-2. Add an explicit freeze-timestamp file so pre-hang event windows can be scored reproducibly.
-3. Parse EVTX directly when a dependency-free or safely vendored path is available.
-4. Add a `profiles/` layer for model-specific facts without hard-coding them into generic rules.
-5. Add an optional public-summary exporter that strips common identifiers.
-6. Add more fixture-based regressions for partial/malformed evidence and additional Windows versions.
-7. Version the JSON schema once external consumers appear.
+## Comparable-tool benchmark
 
-## ProBook case integration
+The September 2026 research pass compares Crash Doctor with:
+- WinDbg;
+- WhoCrashed;
+- BlueScreenView;
+- ProcDump;
+- WPR/WPA;
+- Process Monitor;
+- Windows Error Reporting;
+- Fedora ABRT;
+- Ubuntu Apport;
+- systemd-coredump/coredumpctl.
 
-For the current case, Crash Doctor should help answer the next narrow questions rather than invent a final answer:
+Research and source links are in [`COMPARABLE_TOOLS_RESEARCH.md`](COMPARABLE_TOOLS_RESEARCH.md). The resulting 100 gaps are tracked in [`ROADMAP_100.md`](ROADMAP_100.md).
 
-- Is the firmware device still abnormal after the reported package removal?
-- Does the machine remain stable with Fast Startup/hibernation disabled?
-- Is XTU merely installed, or is non-default tuning active?
-- Is dump capture configured well enough for a future hang/forced dump?
-- Does HWiNFO show thermal, voltage or power-limit behaviour near a freeze?
-- Does instability survive updated firmware, known-good RAM and a clean OS?
+## Delivery strategy
+
+### Phase A — richer evidence
+
+Prioritise dump parsing/symbols, WER ingestion, ETW circular capture, incident catalogue and retention.
+
+### Phase B — stronger diagnosis
+
+Add stack analysis, bugcheck knowledge, historical correlation, signatures, deduplication and driver/module identity.
+
+### Phase C — proactive capture
+
+Add trigger-based dumps, crash/hang detection, boot/resume tracing and runtime hooks.
+
+### Phase D — investigation UX
+
+Add history, timeline, privacy review, support export and remote/offline workflows.
+
+### Phase E — extensibility
+
+Add plugins, custom trace profiles, retracing, debugger integration and reporting backends.
+
+## ProBook integration
+
+The ProBook case remains useful because it forces Crash Doctor to handle:
+- a true hard hang with no trustworthy dump;
+- reused Windows-image history;
+- power-state correlation;
+- firmware abnormalities that are suspicious but not proven causal;
+- weak dump configuration;
+- multiple plausible low-level culprits.
+
+For this case the next diagnostic questions remain:
+- Is the firmware resource currently healthy?
+- Does the machine stay stable with Fast Startup disabled?
+- Is XTU actually applying non-default tuning?
+- Can the next failure produce a trustworthy dump or trace?
+- Do thermal/power/ETW signals change immediately before a freeze?
+- Does the problem survive updated firmware, known-good RAM and a clean OS?
+
+The case test plan remains in [`../analysis/TEST_PLAN.md`](../analysis/TEST_PLAN.md).
