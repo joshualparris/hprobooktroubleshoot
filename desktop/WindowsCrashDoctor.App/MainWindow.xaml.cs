@@ -1,13 +1,13 @@
 using Microsoft.Win32;
 using System.Diagnostics;
-using System.IO.Compression;
-using System.Security.Principal;
-using System.Text.Json;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using WindowsCrashDoctor.Models;
+using WindowsCrashDoctor.Presentation;
 using WindowsCrashDoctor.Services;
 
 namespace WindowsCrashDoctor;
@@ -15,10 +15,14 @@ namespace WindowsCrashDoctor;
 public partial class MainWindow : Window
 {
     private readonly bool _autoRun;
-    private readonly EngineExtractor _engine = new();
-    private readonly PowerShellRunner _powerShell = new();
-    private readonly HistoryService _history = new();
+    private readonly EngineExtractor _engine;
+    private readonly PowerShellRunner _powerShell;
+    private readonly HistoryService _history;
+    private readonly CrashDoctorReportReader _reportReader;
+    private readonly DiagnosticWorkflowService _workflow;
+    private readonly IntegrationService _integrations;
     private readonly SystemMetricsService _metrics;
+    private readonly RedactionService _redaction = new();
     private readonly DispatcherTimer _metricsTimer;
     private readonly string _outputRoot;
     private AppSettings _settings;
@@ -32,12 +36,33 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _autoRun = autoRun;
+        _engine = new EngineExtractor();
+        _powerShell = new PowerShellRunner();
+        _history = new HistoryService();
+        _reportReader = new CrashDoctorReportReader(_engine);
+        _workflow = new DiagnosticWorkflowService(
+            _engine,
+            _powerShell,
+            _history,
+            _reportReader,
+            new PreflightService(),
+            new FingerprintService(),
+            new RunComparisonService(),
+            new ReportEnrichmentService());
+        _integrations = new IntegrationService(_engine, _powerShell);
         _metrics = new SystemMetricsService(_powerShell);
         _settings = _history.LoadSettings();
         _outputRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
             "Windows Crash Doctor Results");
         Directory.CreateDirectory(_outputRoot);
+
+        // The original 1080px minimum made the app unnecessarily unusable on smaller laptops.
+        MinWidth = 760;
+        MinHeight = 560;
+        UseLayoutRounding = true;
+        SnapsToDevicePixels = true;
+        ConfigureAccessibility();
 
         _metricsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
         _metricsTimer.Tick += MetricsTimer_Tick;
@@ -46,16 +71,47 @@ public partial class MainWindow : Window
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         ApplyTheme(_settings.DarkMode);
-        AdminStatusText.Text = IsAdministrator() ? "Administrator mode" : "Standard mode • elevates only when needed";
-        _engine.EnsureExtracted();
-        await InitialiseV2Async();
-        RefreshHistory();
-        await LoadLatestReportAsync();
-        _metricsTimer.Start();
-        _ = RefreshIntegrationsAsync();
+        AdminStatusText.Text = "Standard-user desktop • collector elevates only when needed";
+        try
+        {
+            _engine.EnsureExtracted();
+            await InitialiseV2Async();
+            RefreshHistory();
+            await LoadLatestReportAsync();
+            _metricsTimer.Start();
+            _ = RefreshIntegrationsAsync();
 
-        if (_autoRun)
-            await RunFullDiagnosisAsync();
+            if (!string.IsNullOrWhiteSpace(_history.StartupWarning))
+                AppendLog("PERSISTENCE WARNING: " + _history.StartupWarning);
+
+            if (_autoRun)
+                await RunFullDiagnosisAsync();
+            else
+                RunDiagnosisButton.Focus();
+        }
+        catch (Exception ex)
+        {
+            var safe = _redaction.RedactForLog(ex.Message);
+            DiagnosticStatusText.Text = "Startup is degraded: " + safe;
+            AppendLog("STARTUP WARNING: " + safe);
+            MessageBox.Show(this, safe, "Windows Crash Doctor startup", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void ConfigureAccessibility()
+    {
+        KeyboardNavigation.SetTabNavigation(this, KeyboardNavigationMode.Continue);
+        KeyboardNavigation.SetDirectionalNavigation(this, KeyboardNavigationMode.Contained);
+
+        AutomationProperties.SetName(RunDiagnosisButton, "Run full Windows Crash Doctor diagnosis");
+        AutomationProperties.SetName(DiagnosticLog, "Live diagnostic log");
+        AutomationProperties.SetName(DeepSensorButton, "Start or stop deep sensor log");
+        AutomationProperties.SetName(HistoryList, "Diagnostic history");
+        AutomationProperties.SetName(IntegrationStatusText, "Integration provider status");
+        AutomationProperties.SetName(DashboardFindings, "Latest diagnostic findings");
+        AutomationProperties.SetLiveSetting(DiagnosticStatusText, AutomationLiveSetting.Polite);
+        AutomationProperties.SetLiveSetting(LiveStatusText, AutomationLiveSetting.Polite);
+        AutomationProperties.SetLiveSetting(DeepSensorStatusText, AutomationLiveSetting.Polite);
     }
 
     private async void MetricsTimer_Tick(object? sender, EventArgs e)
@@ -65,25 +121,20 @@ public partial class MainWindow : Window
         try
         {
             var sample = await _metrics.GetAsync();
-            CpuValue.Text = $"{sample.CpuPercent:0}%";
-            SensorCpuValue.Text = CpuValue.Text;
-            CpuBar.Value = sample.CpuPercent;
-            SensorCpuBar.Value = sample.CpuPercent;
-
-            MemoryValue.Text = $"{sample.MemoryPercent:0}%";
-            SensorMemoryValue.Text = MemoryValue.Text;
-            MemoryBar.Value = sample.MemoryPercent;
-            SensorMemoryBar.Value = sample.MemoryPercent;
+            SetPercentMetric(CpuValue, SensorCpuValue, CpuBar, SensorCpuBar, sample.CpuPercent);
+            SetPercentMetric(MemoryValue, SensorMemoryValue, MemoryBar, SensorMemoryBar, sample.MemoryPercent);
 
             CpuTempValue.Text = sample.CpuTemperatureC is double cpuTemp ? $"{cpuTemp:0.#}°C" : "—";
             SensorCpuTemp.Text = CpuTempValue.Text;
             SsdTempValue.Text = sample.SsdTemperatureC is double ssdTemp ? $"{ssdTemp:0.#}°C" : "—";
             SensorSsdTemp.Text = SsdTempValue.Text;
-            LiveStatusText.Text = "Live • " + DateTime.Now.ToString("h:mm:ss tt");
+            LiveStatusText.Text = string.IsNullOrWhiteSpace(sample.Warning)
+                ? "Live • " + DateTime.Now.ToString("h:mm:ss tt")
+                : "Live telemetry limited • " + _redaction.RedactForLog(sample.Warning);
         }
-        catch
+        catch (Exception ex)
         {
-            LiveStatusText.Text = "Live telemetry limited";
+            LiveStatusText.Text = "Live telemetry unavailable • " + _redaction.RedactForLog(ex.Message);
         }
         finally
         {
@@ -91,46 +142,25 @@ public partial class MainWindow : Window
         }
     }
 
-    private static bool IsAdministrator()
+    private static void SetPercentMetric(
+        TextBlock primary,
+        TextBlock sensor,
+        ProgressBar primaryBar,
+        ProgressBar sensorBar,
+        double? value)
     {
-        using var identity = WindowsIdentity.GetCurrent();
-        var principal = new WindowsPrincipal(identity);
-        return principal.IsInRole(WindowsBuiltInRole.Administrator);
-    }
-
-    private void RelaunchElevated(string? argument = null)
-    {
-        var executable = Environment.ProcessPath
-            ?? throw new InvalidOperationException("Unable to locate the Windows Crash Doctor executable.");
-        var psi = new ProcessStartInfo(executable)
-        {
-            UseShellExecute = true,
-            Verb = "runas",
-            Arguments = argument ?? string.Empty
-        };
-        try
-        {
-            Process.Start(psi);
-            Application.Current.Shutdown();
-        }
-        catch
-        {
-            MessageBox.Show(this,
-                "The diagnostic run was not started because Administrator permission was not granted.",
-                "Windows Crash Doctor",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-        }
+        var text = value is double percent ? $"{percent:0}%" : "—";
+        primary.Text = text;
+        sensor.Text = text;
+        primaryBar.Value = value ?? 0;
+        sensorBar.Value = value ?? 0;
+        primaryBar.ToolTip = value is null ? "Metric unavailable" : null;
+        sensorBar.ToolTip = value is null ? "Metric unavailable" : null;
     }
 
     private async Task RunFullDiagnosisAsync()
     {
         if (_diagnosisRunning) return;
-        if (!IsAdministrator())
-        {
-            RelaunchElevated("--run-diagnostics");
-            return;
-        }
 
         _diagnosisRunning = true;
         RunDiagnosisButton.IsEnabled = false;
@@ -142,63 +172,38 @@ public partial class MainWindow : Window
 
         try
         {
-            _engine.EnsureExtracted();
-            AppendLog("Windows Crash Doctor v2 diagnosis started.");
+            AppendLog("Windows Crash Doctor diagnosis started.");
             AppendLog("Evidence stays local on this PC unless you choose to export it.");
-            var preflight = await RefreshPreflightForRunAsync();
-            if (preflight.BlockingCount > 0)
-                throw new InvalidOperationException("Preflight found a blocking prerequisite. Review the diagnostic log before collecting evidence.");
+            var progress = new Progress<DiagnosticWorkflowProgress>(update =>
+            {
+                DiagnosticProgress.Value = Math.Clamp(update.Percent, 0, 100);
+                DiagnosticStatusText.Text = update.Status;
+            });
 
-            DiagnosticProgress.Value = 15;
-            DiagnosticStatusText.Text = "Collecting Windows, firmware, storage and power evidence…";
-            var before = Directory.GetDirectories(_outputRoot, "HPProBook-*").ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var collect = await _powerShell.RunFileAsync(
-                _engine.CollectorPath,
-                new[] { "-OutputRoot", _outputRoot, "-EventHours", "12" },
-                AppendLog,
-                options: new ProcessRunOptions(TimeSpan.FromMinutes(4), OperationId: "full-collector"));
-            if (!collect.Succeeded)
-                throw new InvalidOperationException($"The diagnostic collector ended as {collect.Status}: {collect.FailureReason}");
+            var result = await _workflow.RunFullDiagnosisAsync(
+                _outputRoot,
+                eventHours: 12,
+                progress,
+                AppendLog);
 
-            DiagnosticProgress.Value = 62;
-            DiagnosticStatusText.Text = "Analysing the new evidence snapshot…";
-            var snapshots = new DirectoryInfo(_outputRoot)
-                .GetDirectories("HPProBook-*")
-                .OrderByDescending(d => d.LastWriteTimeUtc)
-                .ToList();
-            var snapshot = snapshots.FirstOrDefault(d => !before.Contains(d.FullName)) ?? snapshots.FirstOrDefault();
-            if (snapshot is null)
-                throw new InvalidOperationException("The collector completed but no diagnostic snapshot folder was found.");
+            _latestReport = result.Report;
+            _latestEvidencePath = result.EvidencePath;
+            _latestComparison = result.Comparison;
+            _latestPreflight = result.Preflight;
+            _settings.LastEvidencePath = result.EvidencePath;
 
-            _latestEvidencePath = snapshot.FullName;
-            var analyse = await _powerShell.RunFileAsync(
-                _engine.CrashDoctorPath,
-                new[] { "-EvidencePath", snapshot.FullName, "-OutputDirectory", snapshot.FullName },
-                AppendLog,
-                options: new ProcessRunOptions(TimeSpan.FromMinutes(2), OperationId: "rules-analysis"));
-            if (!analyse.Succeeded)
-                throw new InvalidOperationException($"Crash Doctor analysis ended as {analyse.Status}: {analyse.FailureReason}");
-
-            DiagnosticProgress.Value = 88;
-            DiagnosticStatusText.Text = "Fingerprinting, comparing and saving the run ledger…";
-            var reportPath = Path.Combine(snapshot.FullName, "crash-doctor-report.json");
-            _latestReport = await ReadReportAsync(reportPath);
-            _settings.LastEvidencePath = snapshot.FullName;
-            _history.SaveSettings(_settings);
-
-            var health = GetHealthLabel(_latestReport);
-            var completed = CompleteV2Run(_latestReport, snapshot.FullName, collect, analyse, health);
-            _latestReport = await ReadReportAsync(reportPath);
-            _latestComparison = _latestReport.Comparison;
-
-            UpdateReportUi(_latestReport);
+            UpdateReportUi(result.Report);
             ApplyV2DashboardSummary();
             RefreshHistory();
             DiagnosticProgress.Value = 100;
-            DiagnosticStatusText.Text = $"Complete • {_latestReport.Findings.Count} findings • {_latestReport.Coverage.Percent:0}% coverage • {TimeSpan.FromMilliseconds(completed.DurationMs):g}";
-            AppendLog("PASS: collection, analysis, fingerprinting, comparison and persistence completed.");
-            AppendLog("CHANGE SUMMARY: " + completed.ComparisonSummary);
-            AppendLog($"Report: {Path.Combine(snapshot.FullName, "crash-doctor-report.md")}");
+            DiagnosticStatusText.Text = result.Warnings.Count == 0
+                ? $"Complete • {result.Report.Findings.Count} findings • {result.Report.Coverage.Percent:0}% coverage • {TimeSpan.FromMilliseconds(result.RunHistory.DurationMs):g}"
+                : $"Complete with {result.Warnings.Count} warning(s) • {result.Report.Findings.Count} findings";
+            AppendLog("PASS: collection, analysis, fingerprinting and comparison completed.");
+            AppendLog("CHANGE SUMMARY: " + result.RunHistory.ComparisonSummary);
+            foreach (var warning in result.Warnings)
+                AppendLog("WARNING: " + warning);
+            AppendLog("Report: " + result.RunHistory.ReportPath);
 
             MainTabs.SelectedIndex = 0;
             SetPage("System Dashboard", "Fresh evidence plus change detection from the previous comparable run");
@@ -216,34 +221,16 @@ public partial class MainWindow : Window
         }
     }
 
-    private static async Task<CrashDoctorReport> ReadReportAsync(string reportPath)
-    {
-        if (!File.Exists(reportPath))
-            throw new FileNotFoundException("Crash Doctor JSON report was not created.", reportPath);
-        await using var stream = File.OpenRead(reportPath);
-        return await JsonSerializer.DeserializeAsync<CrashDoctorReport>(stream, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        }) ?? throw new InvalidOperationException("Crash Doctor JSON report was empty or invalid.");
-    }
-
     private async Task LoadLatestReportAsync()
     {
+        if (string.IsNullOrWhiteSpace(_settings.LastEvidencePath) || !Directory.Exists(_settings.LastEvidencePath))
+            return;
+
         try
         {
-            string? candidate = null;
-            if (!string.IsNullOrWhiteSpace(_settings.LastEvidencePath) && Directory.Exists(_settings.LastEvidencePath))
-                candidate = _settings.LastEvidencePath;
-            else
-                candidate = new DirectoryInfo(_outputRoot).GetDirectories("HPProBook-*")
-                    .OrderByDescending(d => d.LastWriteTimeUtc)
-                    .Select(d => d.FullName)
-                    .FirstOrDefault(path => File.Exists(Path.Combine(path, "crash-doctor-report.json")));
-
-            if (candidate is null) return;
+            var candidate = Path.GetFullPath(_settings.LastEvidencePath);
             var json = Path.Combine(candidate, "crash-doctor-report.json");
-            if (!File.Exists(json)) return;
-            _latestReport = await ReadReportAsync(json);
+            _latestReport = await _reportReader.ReadAsync(json);
             _latestEvidencePath = candidate;
             _latestComparison = _latestReport.Comparison;
             UpdateReportUi(_latestReport);
@@ -252,22 +239,15 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             DiagnosticStatusText.Text = "Previous report could not be loaded: " + _redaction.RedactForLog(ex.Message);
+            AppendLog("REPORT WARNING: " + ex.Message);
         }
-    }
-
-    private static string GetHealthLabel(CrashDoctorReport report)
-    {
-        if (report.Findings.Any(f => f.Severity == "Critical")) return "Critical evidence detected";
-        if (report.Findings.Any(f => f.Severity == "High")) return "Needs attention";
-        if (report.Findings.Any(f => f.Severity == "Medium")) return "Review recommended";
-        return "No high-priority signal detected";
     }
 
     private void UpdateReportUi(CrashDoctorReport report)
     {
         var high = report.Findings.Count(f => f.Severity is "High" or "Critical");
         var medium = report.Findings.Count(f => f.Severity == "Medium");
-        var health = GetHealthLabel(report);
+        var health = DiagnosticWorkflowService.GetHealthLabel(report);
 
         HealthHeadline.Text = health;
         HealthExplanation.Text = high > 0
@@ -277,7 +257,7 @@ public partial class MainWindow : Window
                 : "The captured window contains no high-priority signal. Missing evidence is still treated as unknown rather than healthy.";
 
         FindingCountText.Text = $"{report.Findings.Count} findings • {report.Coverage.Percent:0}% coverage";
-        DashboardFindings.ItemsSource = report.Findings.Take(4).ToList();
+        DashboardFindings.ItemsSource = report.Findings.Take(4).Select(DiagnosticFindingViewModel.From).ToList();
 
         var next = report.Findings.FirstOrDefault(f => f.Severity is "Critical" or "High")
             ?? report.Findings.FirstOrDefault(f => f.Severity == "Medium")
@@ -333,7 +313,7 @@ public partial class MainWindow : Window
         try
         {
             _engine.EnsureExtracted();
-            var output = Path.Combine(_outputRoot, "Dump-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+            var output = Path.Combine(_outputRoot, $"Dump-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}"[..37]);
             Directory.CreateDirectory(output);
             DiagnosticLog.Clear();
             DiagnosticStatusText.Text = "Analysing dump…";
@@ -368,24 +348,21 @@ public partial class MainWindow : Window
 
         try
         {
-            _engine.EnsureExtracted();
-            var install = await _powerShell.RunFileAsync(
-                _engine.IntegrationManagerPath,
-                new[] { "-Action", "install", "-Id", "librehardwaremonitor" },
+            var install = await _integrations.InstallAsync(
+                "librehardwaremonitor",
                 line => Dispatcher.Invoke(() => DeepSensorStatusText.Text = _redaction.RedactForLog(line)),
-                _sensorCts.Token,
-                new ProcessRunOptions(TimeSpan.FromMinutes(2), MaxRetries: 2, RetryTransientFailures: true, OperationId: "provider-install"));
+                _sensorCts.Token);
             if (!install.Succeeded)
                 throw new InvalidOperationException($"LibreHardwareMonitor provider preparation ended as {install.Status}.");
 
-            var output = Path.Combine(_outputRoot, $"sensor-{DateTime.Now:yyyyMMdd-HHmmss}.jsonl");
+            var output = Path.Combine(_outputRoot, $"sensor-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.jsonl");
             DeepSensorStatusText.Text = "Recording deep sensor telemetry for 30 minutes…";
-            var sensorTask = _powerShell.RunFileAsync(
-                _engine.IntegrationManagerPath,
-                new[] { "-Action", "sensors", "-DurationMinutes", "30", "-IntervalSeconds", "2", "-OutputPath", output },
+            var sensorTask = _integrations.CaptureSensorsAsync(
+                output,
+                durationMinutes: 30,
+                intervalSeconds: 2,
                 line => Dispatcher.Invoke(() => DeepSensorStatusText.Text = _redaction.RedactForLog(line)),
-                _sensorCts.Token,
-                new ProcessRunOptions(TimeSpan.FromMinutes(32), OperationId: "sensor-capture"));
+                _sensorCts.Token);
 
             for (var second = 0; second < 1800 && !sensorTask.IsCompleted; second++)
             {
@@ -424,12 +401,9 @@ public partial class MainWindow : Window
         button.Content = "Working…";
         try
         {
-            _engine.EnsureExtracted();
-            var result = await _powerShell.RunFileAsync(
-                _engine.IntegrationManagerPath,
-                new[] { "-Action", "install", "-Id", id },
-                line => Dispatcher.Invoke(() => IntegrationStatusText.AppendText(_redaction.RedactForLog(line) + Environment.NewLine)),
-                options: new ProcessRunOptions(TimeSpan.FromMinutes(2), MaxRetries: 2, RetryTransientFailures: true, OperationId: "integration-install"));
+            var result = await _integrations.InstallAsync(
+                id,
+                line => Dispatcher.Invoke(() => IntegrationStatusText.AppendText(_redaction.RedactForLog(line) + Environment.NewLine)));
             button.Content = result.Succeeded ? "Ready" : "Retry";
             await RefreshIntegrationsAsync();
         }
@@ -448,9 +422,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            _engine.EnsureExtracted();
-            var result = await _powerShell.RunFileAsync(_engine.IntegrationManagerPath, new[] { "-Action", "status" },
-                options: new ProcessRunOptions(TimeSpan.FromSeconds(45), OperationId: "integration-status"));
+            var result = await _integrations.GetStatusAsync();
             IntegrationStatusText.Text = string.IsNullOrWhiteSpace(result.StandardOutput)
                 ? $"Provider status is not available ({result.Status})."
                 : _redaction.RedactForLog(result.StandardOutput.Trim());
@@ -469,6 +441,7 @@ public partial class MainWindow : Window
         {
             var items = _history.LoadHistory();
             HistoryList.ItemsSource = items;
+            NoHistoryText.Text = items.Count == 0 ? "No diagnostic runs yet." : string.Empty;
             NoHistoryText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         catch (Exception ex)
@@ -482,40 +455,20 @@ public partial class MainWindow : Window
     private void RefreshHistory_Click(object sender, RoutedEventArgs e) => RefreshHistory();
     private void OpenResultsFolder_Click(object sender, RoutedEventArgs e) => OpenPath(_outputRoot);
 
-    private void ExportLatestBundle_Click(object sender, RoutedEventArgs e)
-    {
-        if (_latestEvidencePath is null || !Directory.Exists(_latestEvidencePath))
-        {
-            MessageBox.Show(this, "There is no completed diagnostic run to export yet.", "Windows Crash Doctor", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
-        }
-
-        var answer = MessageBox.Show(this,
-            "This is a PRIVATE/FULL export. Diagnostic bundles can contain usernames, device identifiers, event logs and other private information. For sharing, use Privacy-reviewed export instead. Create a local full ZIP?",
-            "Private/full diagnostic export",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
-        if (answer != MessageBoxResult.Yes) return;
-
-        try
-        {
-            var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            var zip = Path.Combine(desktop, $"WindowsCrashDoctor-PRIVATE-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
-            ZipFile.CreateFromDirectory(_latestEvidencePath, zip, CompressionLevel.Optimal, includeBaseDirectory: true);
-            OpenPath(desktop);
-            MessageBox.Show(this, $"Created private/full bundle:\n{zip}\n\nDo not share it without a privacy review.", "Export complete", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, _redaction.RedactForLog(ex.Message), "Export failed", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-    }
-
     private void ThemeButton_Click(object sender, RoutedEventArgs e)
     {
         _settings.DarkMode = !_settings.DarkMode;
         ApplyTheme(_settings.DarkMode);
-        _history.SaveSettings(_settings);
+        try
+        {
+            _history.SaveSettings(_settings);
+        }
+        catch (Exception ex)
+        {
+            var safe = _redaction.RedactForLog(ex.Message);
+            DiagnosticStatusText.Text = "Theme changed for this session; settings could not be saved: " + safe;
+            AppendLog("SETTINGS WARNING: " + safe);
+        }
     }
 
     private static Brush BrushFrom(string hex) => (Brush)new BrushConverter().ConvertFromString(hex)!;
