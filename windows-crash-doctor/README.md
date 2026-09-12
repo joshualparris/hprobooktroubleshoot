@@ -3,7 +3,7 @@
 Windows Crash Doctor is an evidence-first Windows crash/hang triage engine.
 
 The project has two analysis paths:
-- **snapshot analysis** — consumes a reproducible collector folder and evaluates bounded diagnostic rules;
+- **snapshot analysis** — consumes a reproducible collector folder, evaluates bounded diagnostic rules and can correlate optional HWiNFO sensor telemetry plus Windows System Power Reports;
 - **dump analysis** — parses supported Windows crash-dump structures directly and emits Markdown + JSON.
 
 The app is being expanded through the [100-item roadmap](../docs/ROADMAP_100.md). Roadmap status must distinguish shipped capability from partial/in-progress work.
@@ -13,7 +13,7 @@ The app is being expanded through the [100-item roadmap](../docs/ROADMAP_100.md)
 Windows failure investigations commonly mix together:
 - the failure itself;
 - events written only after the reboot;
-- old events inherited from a cloned/refurb image;
+- old or future-dated events inherited from a cloned/refurb image;
 - speculation about a suspicious driver;
 - several simultaneous “fixes”.
 
@@ -28,7 +28,7 @@ Crash Doctor tries to stop that. A finding must distinguish:
 
 - Windows 10/11 or Windows Server capable of running Windows PowerShell 5.1+.
 - Administrator rights are recommended for the collector; analysis can run with ordinary file access to the evidence/dump.
-- No third-party PowerShell modules are required at runtime by the snapshot or native dump parser.
+- No third-party PowerShell modules are required at runtime by the snapshot, telemetry or native dump parser.
 
 ## Snapshot-analysis quick start
 
@@ -44,6 +44,15 @@ Then:
 .\windows-crash-doctor\Invoke-CrashDoctor.ps1 `
   -EvidencePath "$env:USERPROFILE\Desktop\HPProBook-YYYYMMDD-HHMMSS"
 ```
+
+To include an existing HWiNFO sensor export in the same snapshot:
+
+```powershell
+.\scripts\collect-diagnostics.ps1 `
+  -SensorCsvPath "$env:USERPROFILE\Desktop\sensors.CSV"
+```
+
+The collector copies the supplied CSV to `sensors.csv`; it does not start, configure or modify HWiNFO.
 
 To place reports elsewhere:
 
@@ -117,7 +126,8 @@ Designed for a person investigating the machine. It contains:
 - detected findings;
 - severity/confidence;
 - bounded interpretation;
-- next diagnostic action.
+- next diagnostic action;
+- telemetry summary when supported sensor/power evidence is present.
 
 ### `crash-doctor-report.json`
 
@@ -137,7 +147,21 @@ Breaking schema changes should increment `SchemaVersion`.
 | Crash capture | Identify weak pagefile/dump configuration |
 | Storage | Interpret current Windows storage reliability counters conservatively |
 | Events | Summarise WHEA, Kernel-Power 41 and volmgr 161 |
+| Sensor telemetry | Parse HWiNFO-style CSVs, including duplicate headers, and assess RAM pressure, thermal/WHEA state, drive flags, sample gaps and combined workload bursts |
+| System Power Report | Parse `LocalSprData`, count only failure records inside the report's declared time window, and identify abnormal shutdowns/bugchecks without accepting stale/future records as current |
 | Reporting | Markdown + JSON |
+
+## Telemetry interpretation
+
+Sensor and power-report data is time-bounded evidence:
+- sustained high RAM load can explain paging/stalls without proving a hard-reset mechanism;
+- low temperatures and zero throttle flags weaken overheating only for the captured interval;
+- a zero HWiNFO WHEA counter is bounded negative evidence, not a hardware guarantee;
+- brief GPU/ring electrical-limit flags remain low-priority unless they line up with failures;
+- a continuous sensor log argues against a hidden freeze during that exact capture;
+- System Power Report failure sessions are filtered to `ReportStartTime..ScanTime` before being counted.
+
+The final rule matters on reused/refurbished images where inherited or clock-corrupted records can otherwise create false crash histories.
 
 ## Current limitations
 
@@ -146,12 +170,13 @@ Crash Doctor still does **not**:
 - unwind native/kernel call stacks;
 - inspect dump-time locks/deadlocks;
 - fully traverse arbitrary kernel/full-memory dump pages;
+- fully decode arbitrary binary `.evtx` files inside the snapshot rule engine;
 - record ETW/WPR traces;
 - monitor process exceptions/hangs continuously;
 - maintain a persistent incident database;
-- deduplicate repeated crashes;
+- deduplicate repeated crashes across many snapshots;
 - show an interactive timeline;
-- ingest the WER report store;
+- ingest the complete WER report store;
 - send reports to a bug tracker or vendor.
 
 These are explicitly tracked in [`../docs/ROADMAP_100.md`](../docs/ROADMAP_100.md).
@@ -167,9 +192,9 @@ Crash Doctor must not silently:
 - change dump/pagefile policy;
 - disable hibernation;
 - run Driver Verifier;
-- upload dump files, ETL traces or private evidence.
+- upload dump files, ETL traces, sensor logs or private evidence.
 
-Crash dumps can contain process memory, credentials, document fragments and identifiers. Dump parsing is local-only by default; generated reports still require review before publication.
+Crash dumps can contain process memory, credentials, document fragments and identifiers. Event logs and diagnostic snapshots can also contain user/account information. Parsing is local-only by default; generated reports still require review before publication.
 
 ## Input contract
 
@@ -181,6 +206,12 @@ The canonical collector remains:
 
 Crash Doctor treats missing evidence as **unknown**, not healthy. A partial collection should reduce `Coverage` rather than generate confident negative findings.
 
+Optional snapshot telemetry inputs in the evidence directory:
+- `sensors.csv`, `sensor*.csv` or `hwinfo*.csv` — HWiNFO-style sensor export;
+- `systempower-report*.html` or `sleepstudy-report*.html` — Windows System Power Report/SleepStudy data.
+
+The collector already generates `systempower-report.html`. Binary EVTX files are preserved locally for deeper work; the current snapshot core still primarily consumes its text event exports.
+
 Dump mode accepts one local file path and rejects unknown signatures, impossible ranges and truncated structures rather than silently guessing.
 
 ## Testing and QA
@@ -189,6 +220,7 @@ Repository QA runs on `windows-latest` and currently includes:
 - Windows PowerShell parser checks across all `.ps1`/`.psm1` sources;
 - PSScriptAnalyzer error gate;
 - existing snapshot-analysis synthetic self-test;
+- telemetry regression test with duplicate HWiNFO headers, memory/thermal/WHEA/drive checks and an out-of-window future bugcheck that must be ignored;
 - WCD-001 synthetic binary minidump/x64-kernel/x86-kernel fixtures;
 - invalid/truncated dump rejection;
 - dump CLI Markdown/JSON integration check;
@@ -201,6 +233,7 @@ Useful local commands:
 
 ```powershell
 .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
+.\windows-crash-doctor\tests\telemetry-self-test.ps1
 .\windows-crash-doctor\tests\dump-parser-test.ps1
 .\windows-crash-doctor\tests\dump-parser-real-smoke.ps1
 .\windows-crash-doctor\tests\integration-self-test.ps1 -RepositoryMode
@@ -214,7 +247,7 @@ There is currently **no browser UI**, so Playwright is not an appropriate whole-
 2. One concept, one source of truth.
 3. Collection and remediation are separate.
 4. Missing data is unknown, not proof of health.
-5. Event 41 is aftermath evidence, not a root cause.
+5. Event 41 and abnormal-shutdown records are aftermath evidence, not root-cause labels.
 6. Historical Windows-image state is not automatically current-machine state.
 7. A suspicious component is a hypothesis until discriminating evidence supports it.
 8. Prefer controlled A/B tests over batches of changes.

@@ -4,7 +4,8 @@
 [CmdletBinding()]
 param(
     [string]$OutputRoot = ([Environment]::GetFolderPath('Desktop')),
-    [int]$EventHours = 6
+    [int]$EventHours = 6,
+    [string]$SensorCsvPath
 )
 
 $ErrorActionPreference = 'Continue'
@@ -36,6 +37,15 @@ Save-Section 'baseboard.txt' { Get-CimInstance Win32_BaseBoard | Format-List * }
 Save-Section 'bios.txt' { Get-CimInstance Win32_BIOS | Format-List * }
 Save-Section 'cpu.txt' { Get-CimInstance Win32_Processor | Format-List * }
 Save-Section 'memory.txt' { Get-CimInstance Win32_PhysicalMemory | Format-List * }
+Save-Section 'memory-pressure.txt' {
+    Get-CimInstance Win32_OperatingSystem |
+        Select-Object TotalVisibleMemorySize, FreePhysicalMemory, TotalVirtualMemorySize, FreeVirtualMemory |
+        Format-List
+    Get-Counter '\Memory\Available MBytes', '\Memory\Committed Bytes', '\Memory\% Committed Bytes In Use' -MaxSamples 3 -SampleInterval 1 |
+        Select-Object -ExpandProperty CounterSamples |
+        Select-Object Path, CookedValue |
+        Format-Table -AutoSize
+}
 
 Save-Section 'pagefile-and-dumps.txt' {
     Get-CimInstance Win32_ComputerSystem | Format-List AutomaticManagedPagefile
@@ -109,17 +119,35 @@ powercfg /batteryreport /output $batteryReport | Out-Null
 powercfg /systempowerreport /output $powerReport | Out-Null
 Start-Process -FilePath 'msinfo32.exe' -ArgumentList @('/nfo', $msinfoReport) -Wait -NoNewWindow
 
+$sensorCsvAttached = $false
+$sensorCsvSourceName = $null
+if (-not [string]::IsNullOrWhiteSpace($SensorCsvPath)) {
+    if (Test-Path -LiteralPath $SensorCsvPath -PathType Leaf) {
+        Copy-Item -LiteralPath $SensorCsvPath -Destination (Join-Path $out 'sensors.csv') -Force
+        $sensorCsvAttached = $true
+        $sensorCsvSourceName = Split-Path -Leaf $SensorCsvPath
+    }
+    else {
+        Write-Warning "Sensor CSV was requested but not found: $SensorCsvPath"
+    }
+}
+
 $metadataPath = Join-Path -Path $out -ChildPath 'collection-metadata.txt'
 $metadata = [ordered]@{
-    CollectedAtLocal = (Get-Date).ToString('o')
-    EventHours       = $EventHours
-    ComputerName     = $env:COMPUTERNAME
-    UserName         = $env:USERNAME
-    OutputDirectory  = $out
+    CollectedAtLocal   = (Get-Date).ToString('o')
+    EventHours         = $EventHours
+    ComputerName       = $env:COMPUTERNAME
+    UserName           = $env:USERNAME
+    OutputDirectory    = $out
+    SensorCsvAttached  = $sensorCsvAttached
+    SensorCsvSource    = $sensorCsvSourceName
 }
 $metadata.GetEnumerator() | ForEach-Object {
     '{0}={1}' -f $_.Key, $_.Value
 } | Out-File -FilePath $metadataPath -Encoding utf8
 
 Write-Host "Saved diagnostic snapshot to $out"
+if (-not $sensorCsvAttached) {
+    Write-Host 'Optional: rerun with -SensorCsvPath <HWiNFO CSV> to let Crash Doctor correlate sensor telemetry.'
+}
 Write-Host 'Review the folder for sensitive information before publishing any file from it.'

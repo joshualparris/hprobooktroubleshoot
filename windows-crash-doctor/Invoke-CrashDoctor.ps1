@@ -105,8 +105,12 @@ if ($PSCmdlet.ParameterSetName -eq 'Dump') {
     return
 }
 
-$modulePath = Join-Path $PSScriptRoot 'CrashDoctor.psm1'
-Import-Module $modulePath -Force
+$coreModulePath = Join-Path $PSScriptRoot 'CrashDoctor.psm1'
+$telemetryModulePath = Join-Path $PSScriptRoot 'TelemetryAnalysis.psm1'
+Import-Module $coreModulePath -Force
+if (Test-Path -LiteralPath $telemetryModulePath -PathType Leaf) {
+    Import-Module $telemetryModulePath -Force
+}
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = $EvidencePath
@@ -117,13 +121,27 @@ if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
 }
 
 $report = Invoke-CrashDoctorAnalysis -EvidencePath $EvidencePath
+$telemetry = $null
+if (Get-Command Invoke-CrashDoctorTelemetryAnalysis -ErrorAction SilentlyContinue) {
+    $telemetry = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $EvidencePath
+    if ($telemetry.Available) {
+        $report = Add-CrashDoctorTelemetryToReport -Report $report -Telemetry $telemetry
+    }
+}
+
 $markdown = ConvertTo-CrashDoctorMarkdown -Report $report
+if ($null -ne $telemetry -and $telemetry.Available) {
+    $telemetryMarkdown = ConvertTo-CrashDoctorTelemetryMarkdownSection -Telemetry $telemetry
+    if (-not [string]::IsNullOrWhiteSpace($telemetryMarkdown)) {
+        $markdown += [Environment]::NewLine + [Environment]::NewLine + $telemetryMarkdown
+    }
+}
 
 $markdownPath = Join-Path $OutputDirectory 'crash-doctor-report.md'
 $jsonPath = Join-Path $OutputDirectory 'crash-doctor-report.json'
 
 $markdown | Out-File -LiteralPath $markdownPath -Encoding utf8 -Width 500
-$report | ConvertTo-Json -Depth 8 | Out-File -LiteralPath $jsonPath -Encoding utf8 -Width 500
+$report | ConvertTo-Json -Depth 12 | Out-File -LiteralPath $jsonPath -Encoding utf8 -Width 500
 
 Write-Host "Crash Doctor report: $markdownPath"
 Write-Host "Machine-readable report: $jsonPath"

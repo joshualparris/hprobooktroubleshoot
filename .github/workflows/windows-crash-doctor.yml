@@ -86,6 +86,10 @@ jobs:
         shell: powershell
         run: .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
 
+      - name: Run telemetry self-test
+        shell: powershell
+        run: .\windows-crash-doctor\tests\telemetry-self-test.ps1
+
       - name: Run WCD-001 synthetic dump parser regression test
         shell: powershell
         run: .\windows-crash-doctor\tests\dump-parser-test.ps1
