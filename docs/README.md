@@ -11,6 +11,7 @@ This repository has two kinds of documentation and they should not be confused:
 |---|---|
 | Understand the whole repository | [`../README.md`](../README.md) |
 | Run Windows Crash Doctor | [`../windows-crash-doctor/README.md`](../windows-crash-doctor/README.md) |
+| See optional open-source diagnostic providers, licences and supply-chain rules | [`OPEN_SOURCE_INTEGRATIONS.md`](OPEN_SOURCE_INTEGRATIONS.md) |
 | Understand the architecture and design rules | [`WINDOWS_CRASH_DOCTOR_PLAN.md`](WINDOWS_CRASH_DOCTOR_PLAN.md) |
 | See the ten comparator tools and research sources | [`COMPARABLE_TOOLS_RESEARCH.md`](COMPARABLE_TOOLS_RESEARCH.md) |
 | See the full 100-item product backlog | [`ROADMAP_100.md`](ROADMAP_100.md) |
