@@ -1,0 +1,13 @@
+# Raw troubleshooting evidence can contain credentials and personal data.
+evidence/raw/
+
+# Local collection output
+collection-*/
+HPProBook-*/
+*.dmp
+*.etl
+
+# OS/editor noise
+Thumbs.db
+.DS_Store
+.vscode/

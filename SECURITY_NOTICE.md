@@ -1,5 +1,35 @@
-# Security / privacy notice
+# Security and privacy notice
 
-This repository is public. The BitLocker recovery password that appeared in the troubleshooting chat is **intentionally excluded and redacted** from repository material. Treat the original recovery password as exposed and rotate it before relying on BitLocker long-term.
+This is a **public troubleshooting repository**. Diagnostic evidence can contain secrets or identifying information even when the file looks harmless.
 
-Derived analysis also avoids deliberately repeating unnecessary device identifiers. The original raw evidence can contain serial numbers, MAC addresses and other machine-specific metadata; review before publishing raw originals.
+## Never commit
+
+- BitLocker recovery passwords or recovery-key exports
+- passwords, API keys, browser/session tokens or authentication cookies
+- Wi-Fi passwords or exported WLAN profiles containing key material
+- private keys, certificates with private material, or credential-manager exports
+- full email addresses, phone numbers, home addresses or other personal data unless intentionally redacted
+- serial numbers, asset tags or device IDs when they are not required for the diagnosis
+- unreviewed browser histories, chat exports or screenshots
+
+The BitLocker recovery password exposed during this investigation must stay out of Git history and should be rotated/replaced outside this repository.
+
+## Treat raw logs as sensitive
+
+EVTX files, `msinfo32` exports, SetupAPI logs, sleep reports, crash dumps and screenshots can contain usernames, machine names, paths, device identifiers, network details and fragments of other private data.
+
+Before publishing raw evidence:
+
+1. Keep an untouched private original.
+2. Hash it so later redaction can be traced to the original.
+3. Review the file for secrets and personal data.
+4. Publish a redacted derivative when possible.
+5. Record the original hash, redacted-file hash and redaction notes in the evidence manifest.
+
+## Git is permanent enough to matter
+
+Deleting a secret in a later commit does not remove it from prior Git history. If a secret is committed, rotate/revoke it first, then rewrite repository history if required.
+
+## Repository convention
+
+`evidence/raw/` is intentionally ignored by default. Raw evidence should be stored privately unless there is a deliberate decision to publish a reviewed copy.
