@@ -1,0 +1,28 @@
+{
+  "SchemaVersion": 1,
+  "Id": "hp-probook-11-g2",
+  "DisplayName": "HP ProBook 11 G2",
+  "Match": {
+    "ManufacturerRegex": "^(HP|Hewlett-Packard)",
+    "ModelRegex": "ProBook\\s+11\\s+G2"
+  },
+  "Purpose": "Case-specific guidance only. These notes do not become live evidence unless current collection confirms them.",
+  "PriorityChecks": [
+    "Correlate hard freezes with S4/Fast Startup or other resume transitions.",
+    "Capture current N92 BIOS version/date and current firmware-class PnP state.",
+    "Inspect Intel XTU or other low-level tuning components without assuming non-default tuning.",
+    "Measure disconnected-device and SetupAPI respecialisation evidence before attributing faults to the current physical machine.",
+    "Verify pagefile and crash-dump readiness before interpreting missing dumps.",
+    "Preserve one-variable-at-a-time A/B testing."
+  ],
+  "ReferenceCase": {
+    "Repository": "joshualparris/hprobooktroubleshoot",
+    "KnownHistoricalBaseline": [
+      "The reference case originally reported N92 BIOS 01.04 dated 2016-11-02.",
+      "The reference case had prior evidence of a failed-start HP N92 System Firmware capsule.",
+      "The delivered Windows image contained substantial non-present hardware history and Sysprep/respecialisation evidence.",
+      "Intel XTU components were present in the reference installation.",
+      "Two observed September freezes occurred shortly after S4/Fast Startup-style resume."
+    ]
+  }
+}

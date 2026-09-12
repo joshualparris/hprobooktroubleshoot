@@ -1,0 +1,15 @@
+{
+  "SchemaVersion": 1,
+  "SampleIntervalSeconds": 10,
+  "WarningIntervalSeconds": 2,
+  "WarningDurationSeconds": 120,
+  "WarningCpuPercent": 95,
+  "WarningMemoryPercent": 90,
+  "WarningDiskQueue": 4,
+  "IncidentPreWindowMinutes": 30,
+  "IncidentPostWindowMinutes": 5,
+  "RetentionDays": 14,
+  "MaxCanaryFileMB": 25,
+  "IncludeGpu": false,
+  "IncludeThermal": false
+}

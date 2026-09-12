@@ -21,43 +21,58 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Parse CrashDoctor module
+      - name: Parse PowerShell sources
         shell: powershell
         run: |
-          $tokens = $null; $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\windows-crash-doctor\CrashDoctor.psm1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
-          if ($parseErrors.Count) { $parseErrors | Format-List | Out-String | Write-Host; exit 1 }
-
-      - name: Parse CrashDoctor CLI
-        shell: powershell
-        run: |
-          $tokens = $null; $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\windows-crash-doctor\Invoke-CrashDoctor.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
-          if ($parseErrors.Count) { $parseErrors | Format-List | Out-String | Write-Host; exit 1 }
-
-      - name: Parse CrashDoctor self-test
-        shell: powershell
-        run: |
-          $tokens = $null; $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\windows-crash-doctor\tests\self-test.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
-          if ($parseErrors.Count) { $parseErrors | Format-List | Out-String | Write-Host; exit 1 }
-
-      - name: Parse collector
-        shell: powershell
-        run: |
-          $tokens = $null; $parseErrors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '.\scripts\collect-diagnostics.ps1'), [ref]$tokens, [ref]$parseErrors) | Out-Null
-          if ($parseErrors.Count) { $parseErrors | Format-List | Out-String | Write-Host; exit 1 }
-
-      - name: Parse evidence utilities
-        shell: powershell
-        run: |
-          foreach ($file in @('.\scripts\hash-evidence.ps1', '.\scripts\check-public-evidence.ps1')) {
-            $tokens = $null; $parseErrors = $null
+          $files = @(
+            '.\windows-crash-doctor\CrashDoctor.psm1',
+            '.\windows-crash-doctor\Invoke-CrashDoctor.ps1',
+            '.\windows-crash-doctor\WindowsCrashDoctor.psm1',
+            '.\windows-crash-doctor\windows-crash-doctor.ps1',
+            '.\windows-crash-doctor\canary.ps1',
+            '.\windows-crash-doctor\install.ps1',
+            '.\windows-crash-doctor\uninstall.ps1',
+            '.\windows-crash-doctor\bootstrap.ps1',
+            '.\windows-crash-doctor\lib\Core.ps1',
+            '.\windows-crash-doctor\lib\Evidence.ps1',
+            '.\windows-crash-doctor\lib\Hypotheses.ps1',
+            '.\windows-crash-doctor\lib\Reporting.ps1',
+            '.\windows-crash-doctor\lib\Incidents.ps1',
+            '.\windows-crash-doctor\lib\Experiments.ps1',
+            '.\windows-crash-doctor\tests\self-test.ps1',
+            '.\windows-crash-doctor\tests\live-self-test.ps1',
+            '.\scripts\collect-diagnostics.ps1',
+            '.\scripts\hash-evidence.ps1',
+            '.\scripts\check-public-evidence.ps1',
+            '.\scripts\package-windows-crash-doctor.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $parseErrors = $null
             [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$parseErrors) | Out-Null
-            if ($parseErrors.Count) { Write-Host "Parse errors in $file"; $parseErrors | Format-List | Out-String | Write-Host; exit 1 }
+            if ($parseErrors.Count) {
+              Write-Host "Parse errors in $file"
+              $parseErrors | Format-List | Out-String | Write-Host
+              exit 1
+            }
           }
 
-      - name: Run Windows Crash Doctor self-test
+      - name: Run snapshot-analysis self-test
         shell: powershell
         run: .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
+
+      - name: Run live-engine self-test
+        shell: powershell
+        run: .\windows-crash-doctor\tests\live-self-test.ps1 -RepositoryMode
+
+      - name: Build installable ZIP
+        shell: powershell
+        run: .\scripts\package-windows-crash-doctor.ps1 -OutputDirectory .\dist
+
+      - name: Upload Windows Crash Doctor package
+        uses: actions/upload-artifact@v4
+        with:
+          name: WindowsCrashDoctor
+          path: |
+            dist/WindowsCrashDoctor-*.zip
+            dist/WindowsCrashDoctor-*.sha256
