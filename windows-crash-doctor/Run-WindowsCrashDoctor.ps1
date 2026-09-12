@@ -54,19 +54,34 @@ function Write-WcdStep {
     Add-Content -LiteralPath $sessionLog -Value $line -Encoding UTF8
 }
 
+function Invoke-WcdLogged {
+    param(
+        [Parameter(Mandatory = $true)] [scriptblock]$Action
+    )
+
+    & $Action 2>&1 | ForEach-Object {
+        $text = $_ | Out-String
+        $text = $text.TrimEnd()
+        if (-not [string]::IsNullOrWhiteSpace($text)) {
+            Write-Host $text
+            Add-Content -LiteralPath $sessionLog -Value $text -Encoding UTF8
+        }
+    }
+}
+
 Write-WcdStep 'Windows Crash Doctor one-click test starting.'
 Write-WcdStep 'Running built-in regression self-test.'
-& $selfTest -RepositoryMode *>&1 | Tee-Object -FilePath $sessionLog -Append
+Invoke-WcdLogged { & $selfTest -RepositoryMode }
 
 Write-WcdStep 'Running integration policy self-test.'
-& $integrationSelfTest *>&1 | Tee-Object -FilePath $sessionLog -Append
+Invoke-WcdLogged { & $integrationSelfTest }
 
 Write-WcdStep 'Collecting a fresh read-only diagnostic snapshot.'
 $before = @(
     Get-ChildItem -LiteralPath $OutputRoot -Directory -Filter 'HPProBook-*' -ErrorAction SilentlyContinue |
         Select-Object -ExpandProperty FullName
 )
-& $collector -OutputRoot $OutputRoot -EventHours $EventHours *>&1 | Tee-Object -FilePath $sessionLog -Append
+Invoke-WcdLogged { & $collector -OutputRoot $OutputRoot -EventHours $EventHours }
 
 $after = @(
     Get-ChildItem -LiteralPath $OutputRoot -Directory -Filter 'HPProBook-*' -ErrorAction SilentlyContinue |
@@ -81,12 +96,11 @@ if (-not $newSnapshot) {
 }
 
 Write-WcdStep ("Analysing snapshot: {0}" -f $newSnapshot.FullName)
-& $crashDoctor -EvidencePath $newSnapshot.FullName -OutputDirectory $newSnapshot.FullName *>&1 |
-    Tee-Object -FilePath $sessionLog -Append
+Invoke-WcdLogged { & $crashDoctor -EvidencePath $newSnapshot.FullName -OutputDirectory $newSnapshot.FullName }
 
 Write-WcdStep 'Recording optional integration/provider status.'
 $providerStatus = Join-Path $newSnapshot.FullName 'integration-status.txt'
-& $integrationManager -Action status *>&1 | Out-File -LiteralPath $providerStatus -Encoding UTF8 -Width 240
+& $integrationManager -Action status 2>&1 | Out-File -LiteralPath $providerStatus -Encoding UTF8 -Width 240
 
 $report = Join-Path $newSnapshot.FullName 'crash-doctor-report.md'
 $jsonReport = Join-Path $newSnapshot.FullName 'crash-doctor-report.json'
