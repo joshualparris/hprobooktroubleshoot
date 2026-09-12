@@ -4,7 +4,7 @@
 $script:WcdVersion = '0.1.0'
 $script:ModuleRoot = $PSScriptRoot
 
-foreach ($part in @('Core.ps1','Evidence.ps1','Analysis.ps1','Experiments.ps1')) {
+foreach ($part in @('Core.ps1','Evidence.ps1','Hypotheses.ps1','Reporting.ps1','Incidents.ps1','Experiments.ps1')) {
     . (Join-Path (Join-Path $PSScriptRoot 'lib') $part)
 }
 
