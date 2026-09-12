@@ -38,9 +38,9 @@ function Import-WcdSensorCsv {
         foreach($h0 in $raw){$h=[string]$h0;if([string]::IsNullOrWhiteSpace($h)){$h='Unnamed'};if($seen.ContainsKey($h)){$seen[$h]++;$headers+=('{0} #{1}' -f $h,$seen[$h])}else{$seen[$h]=1;$headers+=$h}}
         $rows=New-Object System.Collections.Generic.List[object]
         while(-not $parser.EndOfData){try{$fields=@($parser.ReadFields())}catch [Microsoft.VisualBasic.FileIO.MalformedLineException]{continue};if($fields.Count -eq 0){continue};$row=[ordered]@{};for($i=0;$i -lt $headers.Count;$i++){$row[$headers[$i]]=if($i -lt $fields.Count){$fields[$i]}else{$null}};$rows.Add([pscustomobject]$row)}
-        # Enumerate rows directly. Returning `,$rows` created a nested collection under @(...)
-        # and caused the September 2026 telemetry regression.
-        return @($rows)
+        # PowerShell 5.1 can throw "Argument types do not match" when a generic List[object]
+        # is wrapped directly in @(...). Convert it to a real object[] before returning.
+        return $rows.ToArray()
     } finally {$parser.Close()}
 }
 
@@ -87,7 +87,9 @@ function Import-WcdSensorJsonl {
     param([Parameter(Mandatory=$true)][string]$Path)
     $items=New-Object System.Collections.Generic.List[object]
     foreach($line in Get-Content -LiteralPath $Path -ErrorAction Stop){if([string]::IsNullOrWhiteSpace($line)){continue};try{$item=$line|ConvertFrom-Json -ErrorAction Stop;if($null -eq $item.PSObject.Properties['Error']){$items.Add($item)}}catch{continue}}
-    @($items)
+    # Use a real object[] here as well; PowerShell 5.1 has the same generic-list
+    # array-subexpression failure mode for JSONL captures.
+    return $items.ToArray()
 }
 
 function Get-WcdLibreHardwareMonitorTelemetry {
