@@ -45,6 +45,7 @@ public sealed class PowerShellRunner
 {
     private const int MaxCapturedCharacters = 8 * 1024 * 1024;
     private static readonly TimeSpan MaximumTimeout = TimeSpan.FromHours(2);
+    private static readonly TimeSpan CleanupGrace = TimeSpan.FromSeconds(3);
     private readonly RedactionService _redaction = new();
 
     public async Task<ProcessResult> RunFileAsync(
@@ -118,6 +119,7 @@ public sealed class PowerShellRunner
         catch (OperationCanceledException)
         {
             KillTree(process);
+            await WaitForExitWithGraceAsync(process, CleanupGrace);
             var state = cancellationToken.IsCancellationRequested
                 ? ProcessExecutionStatus.Cancelled
                 : ProcessExecutionStatus.TimedOut;
@@ -225,7 +227,9 @@ public sealed class PowerShellRunner
         {
             while (true)
             {
-                var line = await reader.ReadLineAsync(linkedCts.Token);
+                // Do not cancel pipe reads independently; killing the process closes the pipes and
+                // lets the pump finish without a second cancellation race.
+                var line = await reader.ReadLineAsync();
                 if (line is null) break;
                 AppendBounded(destination, line);
                 onOutput?.Invoke(error ? $"ERROR: {_redaction.RedactForLog(line)}" : _redaction.RedactForLog(line));
@@ -237,19 +241,28 @@ public sealed class PowerShellRunner
         try
         {
             await process.WaitForExitAsync(linkedCts.Token);
-            await Task.WhenAll(stdoutTask, stderrTask);
         }
         catch (OperationCanceledException)
         {
             KillTree(process);
+            await WaitForExitWithGraceAsync(process, CleanupGrace);
+        }
+
+        var pumps = Task.WhenAll(stdoutTask, stderrTask);
+        if (await Task.WhenAny(pumps, Task.Delay(CleanupGrace)) == pumps)
+        {
             try
             {
-                await process.WaitForExitAsync();
+                await pumps;
             }
             catch (Exception ex)
             {
-                Trace.WriteLine($"PowerShell cleanup wait failed: {ex.Message}");
+                Trace.WriteLine($"PowerShell output pump cleanup failed: {ex.Message}");
             }
+        }
+        else
+        {
+            Trace.WriteLine("PowerShell output pumps did not finish within the cleanup grace period.");
         }
 
         var finished = DateTimeOffset.UtcNow;
@@ -288,6 +301,24 @@ public sealed class PowerShellRunner
             destination.AppendLine(line);
         else if (remaining > 0)
             destination.Append(line.AsSpan(0, Math.Min(line.Length, remaining)));
+    }
+
+    private static async Task WaitForExitWithGraceAsync(Process process, TimeSpan grace)
+    {
+        if (process.HasExited) return;
+        using var cleanupCts = new CancellationTokenSource(grace);
+        try
+        {
+            await process.WaitForExitAsync(cleanupCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            KillTree(process);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Trace.WriteLine($"PowerShell cleanup observed an invalid process state: {ex.Message}");
+        }
     }
 
     private static bool IsRetryable(ProcessResult result) =>
