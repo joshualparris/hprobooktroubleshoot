@@ -1,0 +1,85 @@
+<Application x:Class="WindowsCrashDoctor.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <SolidColorBrush x:Key="WindowBackground" Color="#F3F6FB"/>
+        <SolidColorBrush x:Key="PanelBackground" Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="PanelBorder" Color="#E4EAF2"/>
+        <SolidColorBrush x:Key="PrimaryText" Color="#172033"/>
+        <SolidColorBrush x:Key="SecondaryText" Color="#667085"/>
+        <SolidColorBrush x:Key="MutedText" Color="#98A2B3"/>
+        <SolidColorBrush x:Key="Accent" Color="#2563EB"/>
+        <SolidColorBrush x:Key="AccentSoft" Color="#EAF1FF"/>
+        <SolidColorBrush x:Key="Good" Color="#039855"/>
+        <SolidColorBrush x:Key="GoodSoft" Color="#ECFDF3"/>
+        <SolidColorBrush x:Key="Warn" Color="#DC6803"/>
+        <SolidColorBrush x:Key="WarnSoft" Color="#FFF6E8"/>
+        <SolidColorBrush x:Key="Danger" Color="#D92D20"/>
+        <SolidColorBrush x:Key="DangerSoft" Color="#FEF3F2"/>
+        <SolidColorBrush x:Key="SidebarBackground" Color="#0B1220"/>
+        <SolidColorBrush x:Key="SidebarText" Color="#D0D5DD"/>
+        <SolidColorBrush x:Key="SidebarSelected" Color="#172554"/>
+
+        <Style TargetType="Window">
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="Background" Value="{DynamicResource WindowBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryText}"/>
+        </Style>
+
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource PanelBackground}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource PanelBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="16"/>
+            <Setter Property="Padding" Value="20"/>
+        </Style>
+
+        <Style x:Key="PrimaryButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="{DynamicResource Accent}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="18,11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SecondaryButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+            <Setter Property="Foreground" Value="{DynamicResource PrimaryText}"/>
+            <Setter Property="Background" Value="{DynamicResource AccentSoft}"/>
+        </Style>
+
+        <Style x:Key="GhostButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+            <Setter Property="Foreground" Value="{DynamicResource SecondaryText}"/>
+            <Setter Property="Background" Value="Transparent"/>
+        </Style>
+
+        <Style x:Key="NavButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource SidebarText}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="16,12"/>
+            <Setter Property="Margin" Value="0,3"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Application.Resources>
+</Application>
