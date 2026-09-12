@@ -10,9 +10,11 @@ This repository has two kinds of documentation and they should not be confused:
 | Need | Document |
 |---|---|
 | Understand the whole repository | [`../README.md`](../README.md) |
+| See the current engineering quality/risk audit and highest-priority fixes | [`REPOSITORY_AUDIT.md`](REPOSITORY_AUDIT.md) |
 | Run Windows Crash Doctor | [`../windows-crash-doctor/README.md`](../windows-crash-doctor/README.md) |
 | See optional open-source diagnostic providers, licences and supply-chain rules | [`OPEN_SOURCE_INTEGRATIONS.md`](OPEN_SOURCE_INTEGRATIONS.md) |
 | Understand the architecture and design rules | [`WINDOWS_CRASH_DOCTOR_PLAN.md`](WINDOWS_CRASH_DOCTOR_PLAN.md) |
+| See reusable engineering patterns borrowed from Josh's other GitHub repos | [`GITHUB_BORROW_ROADMAP.md`](GITHUB_BORROW_ROADMAP.md) |
 | See the ten comparator tools and research sources | [`COMPARABLE_TOOLS_RESEARCH.md`](COMPARABLE_TOOLS_RESEARCH.md) |
 | See the full 100-item product backlog | [`ROADMAP_100.md`](ROADMAP_100.md) |
 | Handle diagnostic evidence safely | [`../evidence/README.md`](../evidence/README.md) |
@@ -28,14 +30,20 @@ When documents disagree, use this order:
 2. `analysis/STATUS.md` for the current ProBook operational state.
 3. `analysis/MASTER_ANALYSIS.md` for detailed case interpretation.
 4. `windows-crash-doctor/README.md` for currently shipped Crash Doctor behaviour.
-5. `WINDOWS_CRASH_DOCTOR_PLAN.md` for architecture and intended design.
-6. `ROADMAP_100.md` for unimplemented product work.
+5. `REPOSITORY_AUDIT.md` for current cross-cutting quality, risk, integration and release-readiness findings.
+6. `WINDOWS_CRASH_DOCTOR_PLAN.md` for architecture and intended design.
+7. `GITHUB_BORROW_ROADMAP.md` for planned cross-repository adaptations and implementation sequencing.
+8. `ROADMAP_100.md` for the broader unimplemented product backlog.
 
-A roadmap item is not a statement that a feature already exists.
+A roadmap item is not a statement that a feature already exists. An audit finding is not resolved merely because implementation code exists; it should be marked resolved only when the relevant acceptance test/release evidence proves the end-to-end behaviour.
 
 ## Case records
 
 The files in `analysis/` are investigation records. They are intentionally not rewritten just to make the product documentation look cleaner; doing so could blur when a conclusion was reached and what evidence supported it. Navigation and current-state corrections belong in `STATUS.md`, while historical reasoning remains traceable in the original analysis documents.
+
+## Audit maintenance
+
+`REPOSITORY_AUDIT.md` is the repository-wide engineering quality/risk source of truth. Keep its audit IDs stable. When a finding is materially fixed, mark it resolved with the commit/release and the test that proves resolution rather than deleting the historical finding. Re-run a broad audit before major/minor releases or after significant architecture changes.
 
 ## Writing rules for future documentation
 
