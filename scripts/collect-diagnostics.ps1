@@ -195,13 +195,14 @@ if (-not [string]::IsNullOrWhiteSpace($SensorCsvPath)) {
     catch { Add-WcdCollectionFailure -Stage 'sensors.csv' -Exception $_.Exception }
 }
 
-[ordered]@{
+$metadata = [ordered]@{
     SchemaVersion     = '1.0'
     CollectionId      = $collectionId
     CollectedAtLocal  = (Get-Date).ToString('o')
     EventHours        = $EventHours
     SensorCsvAttached = $sensorCsvAttached
-} .GetEnumerator() | ForEach-Object { '{0}={1}' -f $_.Key, $_.Value } |
+}
+$metadata.GetEnumerator() | ForEach-Object { '{0}={1}' -f $_.Key, $_.Value } |
     Out-File -LiteralPath (Join-Path $out 'collection-metadata.txt') -Encoding utf8
 
 $status = [pscustomobject][ordered]@{
