@@ -75,9 +75,9 @@ try {
     Assert-True (-not [string]::IsNullOrWhiteSpace($report.Architecture)) 'real minidump should expose processor architecture'
     Assert-True ($report.ModuleCount -gt 0) 'real minidump should expose at least one loaded module'
     Assert-True ($report.ThreadCount -gt 0) 'real minidump should expose at least one thread'
-    Assert-True (($report.Streams | Where-Object Name -eq 'SystemInfoStream').Count -eq 1) 'real minidump should contain SystemInfoStream'
-    Assert-True (($report.Streams | Where-Object Name -eq 'ModuleListStream').Count -eq 1) 'real minidump should contain ModuleListStream'
-    Assert-True (($report.Streams | Where-Object Name -eq 'ThreadListStream').Count -eq 1) 'real minidump should contain ThreadListStream'
+    Assert-True (@($report.Streams | Where-Object Name -eq 'SystemInfoStream').Count -eq 1) 'real minidump should contain SystemInfoStream'
+    Assert-True (@($report.Streams | Where-Object Name -eq 'ModuleListStream').Count -eq 1) 'real minidump should contain ModuleListStream'
+    Assert-True (@($report.Streams | Where-Object Name -eq 'ThreadListStream').Count -eq 1) 'real minidump should contain ThreadListStream'
 
     Write-Host "Real DbgHelp minidump parsed: $($report.ModuleCount) modules, $($report.ThreadCount) threads, $($report.Header.NumberOfStreams) streams."
     Write-Host 'Windows Crash Doctor real minidump smoke test: PASS'
