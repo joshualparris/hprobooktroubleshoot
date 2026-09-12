@@ -32,9 +32,10 @@ public partial class MainWindow
                 $"Crash Doctor reviewed this bundle before export.\n\n" +
                 $"Include: {plan.IncludedCount} file(s)\n" +
                 $"Exclude: {plan.ExcludedCount} high-risk/unscannable file(s)\n" +
-                $"Text files requiring redaction: {plan.RedactedFileCount}\n\n" +
+                $"Text files requiring redaction: {plan.RedactedFileCount}\n" +
+                $"Sensitive matches to redact: {plan.SensitiveMatchCount}\n\n" +
                 $"Excluded by default:\n{preview}\n\n" +
-                "The exported ZIP is a derivative; your original evidence is not changed. Continue?",
+                "The secret scanner records pattern type and line only; it never shows the matched secret. The exported ZIP is a derivative and your original evidence is not changed. Continue?",
                 "Privacy-reviewed diagnostic export",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning);
@@ -48,14 +49,14 @@ public partial class MainWindow
                 $"Created privacy-reviewed bundle:\n{result.ZipPath}\n\n" +
                 $"Included {result.IncludedCount}; excluded {result.ExcludedCount}; " +
                 $"redacted {result.TotalRedactions} value(s) across {result.RedactedFileCount} file(s).\n\n" +
-                "See export-manifest.json inside the ZIP for the complete inclusion/exclusion record.",
+                "See export-manifest.json inside the ZIP for the inclusion/exclusion record and secret-pattern metadata.",
                 "Export complete",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Export failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, _redaction.RedactForLog(ex.Message), "Export failed", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 }
