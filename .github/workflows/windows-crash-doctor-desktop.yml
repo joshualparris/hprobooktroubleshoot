@@ -1,0 +1,80 @@
+name: Windows Crash Doctor Desktop
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - 'scripts/collect-diagnostics.ps1'
+      - 'windows-crash-doctor/**'
+      - '.github/workflows/windows-crash-doctor-desktop.yml'
+      - 'INSTALL-WINDOWS-CRASH-DOCTOR-GUI.cmd'
+      - 'scripts/Install-WindowsCrashDoctorGui.ps1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-crash-doctor-desktop-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build desktop app
+        shell: powershell
+        run: |
+          dotnet restore .\desktop\WindowsCrashDoctor.App\WindowsCrashDoctor.App.csproj
+          dotnet publish .\desktop\WindowsCrashDoctor.App\WindowsCrashDoctor.App.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -o .\dist\win-x64
+
+          if (-not (Test-Path .\dist\win-x64\WindowsCrashDoctor.exe)) {
+            throw 'WindowsCrashDoctor.exe was not produced.'
+          }
+
+      - name: Validate package and hash
+        shell: powershell
+        run: |
+          Get-FileHash .\dist\win-x64\WindowsCrashDoctor.exe -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  WindowsCrashDoctor.exe" } |
+            Set-Content .\dist\win-x64\WindowsCrashDoctor.exe.sha256 -Encoding ascii
+          Get-ChildItem .\dist\win-x64 | Format-Table Name, Length
+
+      - name: Upload desktop build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WindowsCrashDoctor-win-x64
+          path: |
+            dist/win-x64/WindowsCrashDoctor.exe
+            dist/win-x64/WindowsCrashDoctor.exe.sha256
+          retention-days: 30
+
+      - name: Publish rolling desktop preview release
+        if: github.ref == 'refs/heads/main'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'windows-crash-doctor-desktop-latest'
+          gh release delete $tag --yes --cleanup-tag 2>$null
+          $notes = @'
+          Native Windows desktop preview with a polished dashboard, one-click full diagnosis, live CPU/RAM/temperature telemetry, deep LibreHardwareMonitor logging, diagnostic history, dump analysis, provider management, local export and light/dark themes.
+
+          The executable is currently unsigned, so Windows SmartScreen may show an Unknown Publisher warning. Source and build workflow are public in this repository.
+          '@
+          gh release create $tag --target $env:GITHUB_SHA --title 'Windows Crash Doctor Desktop Preview' --prerelease --notes $notes
+          gh release upload $tag .\dist\win-x64\WindowsCrashDoctor.exe .\dist\win-x64\WindowsCrashDoctor.exe.sha256 --clobber
