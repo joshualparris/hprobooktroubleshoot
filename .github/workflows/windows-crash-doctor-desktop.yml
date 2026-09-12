@@ -9,29 +9,51 @@ on:
       - 'windows-crash-doctor/**'
       - '.github/workflows/windows-crash-doctor-desktop.yml'
       - 'INSTALL-WINDOWS-CRASH-DOCTOR-GUI.cmd'
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'scripts/**'
+      - 'windows-crash-doctor/**'
+      - '.github/workflows/windows-crash-doctor-desktop.yml'
+      - 'INSTALL-WINDOWS-CRASH-DOCTOR-GUI.cmd'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-crash-doctor-product-gate
+  group: windows-crash-doctor-product-gate-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify-and-package:
     name: Verify engine + desktop + release package
-    runs-on: windows-latest
+    runs-on: windows-2025
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 1
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '8.0.425'
+
+      - name: Install exact PowerShell QA module versions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pesterVersion = [version]'5.9.0'
+          $analyzerVersion = [version]'1.25.0'
+          if (-not (Get-Module -ListAvailable Pester | Where-Object Version -eq $pesterVersion)) {
+            Install-Module Pester -RequiredVersion $pesterVersion -Scope CurrentUser -Force -SkipPublisherCheck
+          }
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer | Where-Object Version -eq $analyzerVersion)) {
+            Install-Module PSScriptAnalyzer -RequiredVersion $analyzerVersion -Scope CurrentUser -Force
+          }
+          Import-Module Pester -RequiredVersion $pesterVersion -Force
+          Import-Module PSScriptAnalyzer -RequiredVersion $analyzerVersion -Force
 
       - name: Parse every PowerShell source
         shell: powershell
@@ -57,7 +79,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Import-Module PSScriptAnalyzer -ErrorAction Stop
+          Import-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Force
           $issues = @()
           $issues += Invoke-ScriptAnalyzer -Path '.\windows-crash-doctor' -Recurse -Severity Error
           $issues += Invoke-ScriptAnalyzer -Path '.\scripts' -Recurse -Severity Error
@@ -65,6 +87,10 @@ jobs:
             $issues | Format-Table -AutoSize | Out-String | Write-Host
             throw "PSScriptAnalyzer found $($issues.Count) error-severity issue(s)."
           }
+
+      - name: Run code-principles invariant test
+        shell: powershell
+        run: .\windows-crash-doctor\tests\principles-self-test.ps1
 
       - name: Run core snapshot regression tests
         shell: powershell
@@ -83,7 +109,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Import-Module Pester -MinimumVersion 5.5.0 -ErrorAction Stop
+          Import-Module Pester -RequiredVersion 5.9.0 -Force
           $config = New-PesterConfiguration
           $config.Run.Path = '.\windows-crash-doctor\tests\Integrations.Tests.ps1'
           $config.Run.PassThru = $true
@@ -181,6 +207,7 @@ jobs:
             verification = [ordered]@{
               powershellParser = 'passed'
               psscriptAnalyzer = 'passed'
+              principlesTest = 'passed'
               snapshotTests = 'passed'
               telemetryTests = 'passed'
               dumpTests = 'passed'
@@ -194,7 +221,7 @@ jobs:
           Get-ChildItem $release | Sort-Object Name | Format-Table Name, Length
 
       - name: Upload verified release candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: WindowsCrashDoctor-verified-${{ github.sha }}
           path: dist/release/*
@@ -205,12 +232,12 @@ jobs:
     name: Publish canary only after product gate
     if: github.ref == 'refs/heads/main'
     needs: verify-and-package
-    runs-on: windows-latest
+    runs-on: windows-2025
     permissions:
       contents: write
     steps:
       - name: Download already-verified release candidate
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: WindowsCrashDoctor-verified-${{ github.sha }}
           path: release
@@ -270,7 +297,7 @@ jobs:
           $notes = @"
           **Canary / advanced preview — not a stable release.**
 
-          This artifact was published only after the repository product gate passed: PowerShell parsing, PSScriptAnalyzer, snapshot/telemetry/dump/integration regression tests, public-evidence guard, desktop compilation, packaged-engine extraction and an end-to-end `WindowsCrashDoctor.exe --self-test`.
+          This artifact was published only after the repository product gate passed: PowerShell parsing, PSScriptAnalyzer, principles invariants, snapshot/telemetry/dump/integration regression tests, public-evidence guard, desktop compilation, packaged-engine extraction and an end-to-end `WindowsCrashDoctor.exe --self-test`.
 
           Source commit: `$env:GITHUB_SHA`
           Product: `$($manifest.productVersion)`
