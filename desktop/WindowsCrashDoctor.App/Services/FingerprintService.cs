@@ -8,6 +8,7 @@ namespace WindowsCrashDoctor.Services;
 public sealed class FingerprintService
 {
     private static readonly Regex Whitespace = new(@"\s+", RegexOptions.Compiled);
+    private readonly RedactionService _redaction = new();
 
     public string DeviceFingerprint(CrashDoctorReport report)
     {
@@ -62,7 +63,7 @@ public sealed class FingerprintService
                 Severity = finding.Severity,
                 Confidence = finding.Confidence,
                 Title = finding.Title,
-                Evidence = finding.Evidence,
+                Evidence = _redaction.RedactForLog(finding.Evidence),
                 SourceCollector = finding.SourceCollector,
                 RuleVersion = ruleVersion
             });
@@ -78,7 +79,8 @@ public sealed class FingerprintService
             var x when x.Contains("storage") || x.Contains("ssd") => "storage",
             var x when x.Contains("firmware") || x.Contains("bios") => "firmware",
             var x when x.Contains("whea") || x.Contains("kernel-power") || x.Contains("volmgr") => "events",
-            var x when x.Contains("memory") || x.Contains("pagefile") || x.Contains("dump") => "memory",
+            var x when x.Contains("pagefile") || x.Contains("dump") => "dump",
+            var x when x.Contains("memory") => "memory",
             var x when x.Contains("power") || x.Contains("startup") || x.Contains("hibernate") => "power",
             _ => null
         };
