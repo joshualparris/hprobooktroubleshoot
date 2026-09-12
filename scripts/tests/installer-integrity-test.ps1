@@ -75,6 +75,8 @@ function Invoke-InstallerChild {
         $ErrorActionPreference = 'Continue'
         $output = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $installer @Arguments 2>&1 | Out-String
         $exitCode = $LASTEXITCODE
+        # A deliberately failing child must not become this regression script's own process status.
+        $global:LASTEXITCODE = 0
     }
     finally {
         $ErrorActionPreference = $previousPreference
