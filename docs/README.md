@@ -13,6 +13,7 @@ This repository has two kinds of documentation and they should not be confused:
 | Run Windows Crash Doctor | [`../windows-crash-doctor/README.md`](../windows-crash-doctor/README.md) |
 | See optional open-source diagnostic providers, licences and supply-chain rules | [`OPEN_SOURCE_INTEGRATIONS.md`](OPEN_SOURCE_INTEGRATIONS.md) |
 | Understand the architecture and design rules | [`WINDOWS_CRASH_DOCTOR_PLAN.md`](WINDOWS_CRASH_DOCTOR_PLAN.md) |
+| See reusable engineering patterns borrowed from Josh's other GitHub repos | [`GITHUB_BORROW_ROADMAP.md`](GITHUB_BORROW_ROADMAP.md) |
 | See the ten comparator tools and research sources | [`COMPARABLE_TOOLS_RESEARCH.md`](COMPARABLE_TOOLS_RESEARCH.md) |
 | See the full 100-item product backlog | [`ROADMAP_100.md`](ROADMAP_100.md) |
 | Handle diagnostic evidence safely | [`../evidence/README.md`](../evidence/README.md) |
@@ -29,7 +30,8 @@ When documents disagree, use this order:
 3. `analysis/MASTER_ANALYSIS.md` for detailed case interpretation.
 4. `windows-crash-doctor/README.md` for currently shipped Crash Doctor behaviour.
 5. `WINDOWS_CRASH_DOCTOR_PLAN.md` for architecture and intended design.
-6. `ROADMAP_100.md` for unimplemented product work.
+6. `GITHUB_BORROW_ROADMAP.md` for planned cross-repository adaptations and implementation sequencing.
+7. `ROADMAP_100.md` for the broader unimplemented product backlog.
 
 A roadmap item is not a statement that a feature already exists.
 
