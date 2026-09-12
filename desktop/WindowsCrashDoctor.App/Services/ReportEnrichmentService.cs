@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -7,6 +8,8 @@ namespace WindowsCrashDoctor.Services;
 
 public sealed class ReportEnrichmentService
 {
+    private const long MaxReportBytes = 16 * 1024 * 1024;
+    private const long MaxMarkdownBytes = 32 * 1024 * 1024;
     private readonly JsonSerializerOptions _json = new() { WriteIndented = true };
 
     public void Enrich(
@@ -19,8 +22,9 @@ public sealed class ReportEnrichmentService
         DiagnosticRegistry registry,
         IReadOnlyList<DiagnosticFinding> findings)
     {
+        ValidateInputFile(jsonPath, MaxReportBytes, "Crash Doctor JSON report");
         var root = JsonNode.Parse(File.ReadAllText(jsonPath))?.AsObject()
-            ?? throw new InvalidOperationException("Crash Doctor JSON report could not be enriched because it is not an object.");
+            ?? throw new InvalidDataException("Crash Doctor JSON report could not be enriched because it is not an object.");
 
         root["Run"] = JsonSerializer.SerializeToNode(run, _json);
         root["Preflight"] = JsonSerializer.SerializeToNode(preflight, _json);
@@ -46,13 +50,13 @@ public sealed class ReportEnrichmentService
                 node["ComparisonState"] = finding.ComparisonState;
             }
         }
-        File.WriteAllText(jsonPath, root.ToJsonString(_json));
+        WriteTextAtomically(jsonPath, root.ToJsonString(_json));
 
         var marker = $"<!-- WCD-V2-RUN:{run.RunId} -->";
-        var markdown = File.Exists(markdownPath) ? File.ReadAllText(markdownPath) : "# Windows Crash Doctor report";
+        var markdown = File.Exists(markdownPath) ? ReadBoundedText(markdownPath, MaxMarkdownBytes, "Crash Doctor Markdown report") : "# Windows Crash Doctor report";
         if (markdown.Contains(marker, StringComparison.Ordinal)) return;
 
-        var lines = new StringBuilder();
+        var lines = new StringBuilder(markdown);
         lines.AppendLine().AppendLine();
         lines.AppendLine(marker);
         lines.AppendLine("## Run comparison and evidence provenance");
@@ -71,7 +75,7 @@ public sealed class ReportEnrichmentService
         {
             lines.AppendLine().AppendLine("### Incomplete/degraded evidence").AppendLine();
             foreach (var item in missing)
-                lines.AppendLine($"- **{item.Name}:** {item.Status}{(string.IsNullOrWhiteSpace(item.FailureReason) ? "" : " — " + item.FailureReason)}");
+                lines.AppendLine($"- **{Escape(item.Name)}:** {Escape(item.Status)}{(string.IsNullOrWhiteSpace(item.FailureReason) ? "" : " — " + Escape(item.FailureReason))}");
         }
 
         if (comparison.Items.Count > 0)
@@ -83,7 +87,50 @@ public sealed class ReportEnrichmentService
                 lines.AppendLine($"| **{Escape(item.State)}** | {Escape(item.Title)} | {Escape(item.Explanation ?? "")} |");
         }
         lines.AppendLine().AppendLine("> A comparison describes evidence differences between snapshots. It does not prove that a changed item caused or fixed a crash.");
-        File.AppendAllText(markdownPath, lines.ToString());
+        WriteTextAtomically(markdownPath, lines.ToString());
+    }
+
+    private static void ValidateInputFile(string path, long maxBytes, string description)
+    {
+        var info = new FileInfo(path);
+        if (!info.Exists || info.Length <= 0 || info.Length > maxBytes)
+            throw new InvalidDataException($"{description} is missing, empty or above the {maxBytes}-byte limit.");
+    }
+
+    private static string ReadBoundedText(string path, long maxBytes, string description)
+    {
+        ValidateInputFile(path, maxBytes, description);
+        return File.ReadAllText(path);
+    }
+
+    private static void WriteTextAtomically(string path, string content)
+    {
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path))
+            ?? throw new InvalidOperationException("Report output directory could not be resolved.");
+        Directory.CreateDirectory(directory);
+        var tempPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            using (var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+            {
+                writer.Write(content);
+                writer.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(tempPath, path, overwrite: true);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath)) File.Delete(tempPath);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"Report temporary-file cleanup failed: {ex.Message}");
+            }
+        }
     }
 
     private static int StateOrder(string state) => state switch
