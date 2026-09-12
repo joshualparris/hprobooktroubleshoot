@@ -9,7 +9,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$out = Join-Path $OutputRoot "HPProBook-$stamp"
+$out = Join-Path -Path $OutputRoot -ChildPath "HPProBook-$stamp"
 New-Item -ItemType Directory -Path $out -Force | Out-Null
 
 function Save-Section {
@@ -18,7 +18,7 @@ function Save-Section {
         [Parameter(Mandatory = $true)] [scriptblock]$Action
     )
 
-    $path = Join-Path $out $Name
+    $path = Join-Path -Path $out -ChildPath $Name
     try {
         & $Action 2>&1 | Out-File -FilePath $path -Encoding utf8 -Width 300
     }
@@ -64,16 +64,16 @@ Save-Section 'published-drivers.txt' { pnputil /enum-drivers }
 
 Save-Section 'interesting-services.txt' {
     Get-Service | Where-Object {
-        $_.Name -match 'XTU|Cx|Conex|WirelessButton|HP' -or
-        $_.DisplayName -match 'XTU|Conex|Wireless Button|HP'
+        ($_.Name -match 'XTU|Cx|Conex|WirelessButton|HP') -or
+        ($_.DisplayName -match 'XTU|Conex|Wireless Button|HP')
     } | Sort-Object Name | Format-Table -AutoSize
 }
 
 Save-Section 'interesting-drivers.txt' {
     Get-CimInstance Win32_SystemDriver | Where-Object {
-        $_.Name -match 'XTU|Cx|Conex|HP|Intel' -or
-        $_.DisplayName -match 'XTU|Conex|HP|Intel' -or
-        $_.PathName -match 'XTU|Conex|Cx|HP'
+        ($_.Name -match 'XTU|Cx|Conex|HP|Intel') -or
+        ($_.DisplayName -match 'XTU|Conex|HP|Intel') -or
+        ($_.PathName -match 'XTU|Conex|Cx|HP')
     } | Sort-Object Name |
         Select-Object Name, DisplayName, State, StartMode, PathName |
         Format-Table -AutoSize
@@ -93,14 +93,23 @@ Save-Section 'recent-application-events.txt' {
 
 # Preserve recent binary event logs locally for deeper analysis.
 $milliseconds = $EventHours * 60 * 60 * 1000
-wevtutil epl System (Join-Path $out 'System.evtx') "/q:*[System[TimeCreated[timediff(@SystemTime) <= $milliseconds]]]" 2>$null
-wevtutil epl Application (Join-Path $out 'Application.evtx') "/q:*[System[TimeCreated[timediff(@SystemTime) <= $milliseconds]]]" 2>$null
+$eventQuery = "*[System[TimeCreated[timediff(@SystemTime) <= $milliseconds]]]"
+$systemEvtx = Join-Path -Path $out -ChildPath 'System.evtx'
+$applicationEvtx = Join-Path -Path $out -ChildPath 'Application.evtx'
+& wevtutil.exe epl System $systemEvtx "/q:$eventQuery" 2>$null
+& wevtutil.exe epl Application $applicationEvtx "/q:$eventQuery" 2>$null
 
-Copy-Item "$env:WINDIR\INF\setupapi.dev.log" (Join-Path $out 'setupapi.dev.log') -ErrorAction SilentlyContinue
-powercfg /batteryreport /output (Join-Path $out 'battery-report.html') | Out-Null
-powercfg /systempowerreport /output (Join-Path $out 'systempower-report.html') | Out-Null
-Start-Process -FilePath 'msinfo32.exe' -ArgumentList '/nfo', (Join-Path $out 'msinfo32.nfo') -Wait -NoNewWindow
+$setupApiTarget = Join-Path -Path $out -ChildPath 'setupapi.dev.log'
+Copy-Item -LiteralPath "$env:WINDIR\INF\setupapi.dev.log" -Destination $setupApiTarget -ErrorAction SilentlyContinue
 
+$batteryReport = Join-Path -Path $out -ChildPath 'battery-report.html'
+$powerReport = Join-Path -Path $out -ChildPath 'systempower-report.html'
+$msinfoReport = Join-Path -Path $out -ChildPath 'msinfo32.nfo'
+powercfg /batteryreport /output $batteryReport | Out-Null
+powercfg /systempowerreport /output $powerReport | Out-Null
+Start-Process -FilePath 'msinfo32.exe' -ArgumentList @('/nfo', $msinfoReport) -Wait -NoNewWindow
+
+$metadataPath = Join-Path -Path $out -ChildPath 'collection-metadata.txt'
 [ordered]@{
     CollectedAtLocal = (Get-Date).ToString('o')
     EventHours       = $EventHours
@@ -109,7 +118,7 @@ Start-Process -FilePath 'msinfo32.exe' -ArgumentList '/nfo', (Join-Path $out 'ms
     OutputDirectory  = $out
 }.GetEnumerator() | ForEach-Object {
     '{0}={1}' -f $_.Key, $_.Value
-} | Out-File (Join-Path $out 'collection-metadata.txt') -Encoding utf8
+} | Out-File -FilePath $metadataPath -Encoding utf8
 
 Write-Host "Saved diagnostic snapshot to $out"
 Write-Host 'Review the folder for sensitive information before publishing any file from it.'
