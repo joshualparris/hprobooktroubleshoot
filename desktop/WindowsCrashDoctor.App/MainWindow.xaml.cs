@@ -48,6 +48,7 @@ public partial class MainWindow : Window
         ApplyTheme(_settings.DarkMode);
         AdminStatusText.Text = IsAdministrator() ? "Administrator mode" : "Standard mode • elevates only when needed";
         _engine.EnsureExtracted();
+        await InitialiseV2Async();
         RefreshHistory();
         await LoadLatestReportAsync();
         _metricsTimer.Start();
@@ -135,15 +136,18 @@ public partial class MainWindow : Window
         RunDiagnosisButton.IsEnabled = false;
         DiagnosticLog.Clear();
         DiagnosticProgress.Value = 5;
-        DiagnosticStatusText.Text = "Preparing diagnostic engine…";
+        DiagnosticStatusText.Text = "Running preflight…";
         MainTabs.SelectedIndex = 1;
-        SetPage("Diagnostics", "Collecting current-machine evidence and ranking what matters");
+        SetPage("Diagnostics", "Preflight → collect → analyse → compare → persist → export safely");
 
         try
         {
             _engine.EnsureExtracted();
-            AppendLog("Windows Crash Doctor full diagnosis started.");
+            AppendLog("Windows Crash Doctor v2 diagnosis started.");
             AppendLog("Evidence stays local on this PC unless you choose to export it.");
+            var preflight = await RefreshPreflightForRunAsync();
+            if (preflight.BlockingCount > 0)
+                throw new InvalidOperationException("Preflight found a blocking prerequisite. Review the diagnostic log before collecting evidence.");
 
             DiagnosticProgress.Value = 15;
             DiagnosticStatusText.Text = "Collecting Windows, firmware, storage and power evidence…";
@@ -151,9 +155,10 @@ public partial class MainWindow : Window
             var collect = await _powerShell.RunFileAsync(
                 _engine.CollectorPath,
                 new[] { "-OutputRoot", _outputRoot, "-EventHours", "12" },
-                AppendLog);
-            if (collect.ExitCode != 0)
-                throw new InvalidOperationException("The diagnostic collector returned an error. See the live log for details.");
+                AppendLog,
+                options: new ProcessRunOptions(TimeSpan.FromMinutes(4), OperationId: "full-collector"));
+            if (!collect.Succeeded)
+                throw new InvalidOperationException($"The diagnostic collector ended as {collect.Status}: {collect.FailureReason}");
 
             DiagnosticProgress.Value = 62;
             DiagnosticStatusText.Text = "Analysing the new evidence snapshot…";
@@ -169,46 +174,40 @@ public partial class MainWindow : Window
             var analyse = await _powerShell.RunFileAsync(
                 _engine.CrashDoctorPath,
                 new[] { "-EvidencePath", snapshot.FullName, "-OutputDirectory", snapshot.FullName },
-                AppendLog);
-            if (analyse.ExitCode != 0)
-                throw new InvalidOperationException("Crash Doctor could not analyse the evidence snapshot.");
+                AppendLog,
+                options: new ProcessRunOptions(TimeSpan.FromMinutes(2), OperationId: "rules-analysis"));
+            if (!analyse.Succeeded)
+                throw new InvalidOperationException($"Crash Doctor analysis ended as {analyse.Status}: {analyse.FailureReason}");
 
             DiagnosticProgress.Value = 88;
-            DiagnosticStatusText.Text = "Building dashboard and history…";
+            DiagnosticStatusText.Text = "Fingerprinting, comparing and saving the run ledger…";
             var reportPath = Path.Combine(snapshot.FullName, "crash-doctor-report.json");
             _latestReport = await ReadReportAsync(reportPath);
             _settings.LastEvidencePath = snapshot.FullName;
             _history.SaveSettings(_settings);
 
             var health = GetHealthLabel(_latestReport);
-            _history.AddHistory(new DiagnosticRunHistory
-            {
-                RanAt = DateTimeOffset.Now,
-                Status = "Completed",
-                HealthLabel = health,
-                EvidencePath = snapshot.FullName,
-                Model = _latestReport.Inventory.Model ?? "Unknown device",
-                HighCount = _latestReport.Findings.Count(f => f.Severity is "High" or "Critical"),
-                MediumCount = _latestReport.Findings.Count(f => f.Severity == "Medium"),
-                FindingCount = _latestReport.Findings.Count,
-                CoveragePercent = _latestReport.Coverage.Percent
-            });
+            var completed = CompleteV2Run(_latestReport, snapshot.FullName, collect, analyse, health);
+            _latestReport = await ReadReportAsync(reportPath);
+            _latestComparison = _latestReport.Comparison;
 
             UpdateReportUi(_latestReport);
+            ApplyV2DashboardSummary();
             RefreshHistory();
             DiagnosticProgress.Value = 100;
-            DiagnosticStatusText.Text = $"Complete • {_latestReport.Findings.Count} evidence findings • {_latestReport.Coverage.Percent:0}% collection coverage";
-            AppendLog("PASS: collection and analysis completed successfully.");
+            DiagnosticStatusText.Text = $"Complete • {_latestReport.Findings.Count} findings • {_latestReport.Coverage.Percent:0}% coverage • {TimeSpan.FromMilliseconds(completed.DurationMs):g}";
+            AppendLog("PASS: collection, analysis, fingerprinting, comparison and persistence completed.");
+            AppendLog("CHANGE SUMMARY: " + completed.ComparisonSummary);
             AppendLog($"Report: {Path.Combine(snapshot.FullName, "crash-doctor-report.md")}");
 
             MainTabs.SelectedIndex = 0;
-            SetPage("System Dashboard", "Fresh evidence from the completed diagnostic run");
+            SetPage("System Dashboard", "Fresh evidence plus change detection from the previous comparable run");
         }
         catch (Exception ex)
         {
             DiagnosticStatusText.Text = "Diagnosis did not complete";
             AppendLog("FAILED: " + ex.Message);
-            MessageBox.Show(this, ex.Message, "Windows Crash Doctor", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, _redaction.RedactForLog(ex.Message), "Windows Crash Doctor", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
         {
@@ -246,10 +245,13 @@ public partial class MainWindow : Window
             if (!File.Exists(json)) return;
             _latestReport = await ReadReportAsync(json);
             _latestEvidencePath = candidate;
+            _latestComparison = _latestReport.Comparison;
             UpdateReportUi(_latestReport);
+            ApplyV2DashboardSummary();
         }
-        catch
+        catch (Exception ex)
         {
+            DiagnosticStatusText.Text = "Previous report could not be loaded: " + _redaction.RedactForLog(ex.Message);
         }
     }
 
@@ -282,7 +284,7 @@ public partial class MainWindow : Window
             ?? report.Findings.FirstOrDefault();
         if (next is not null)
         {
-            RecommendationTitle.Text = next.Title;
+            RecommendationTitle.Text = next.ComparisonState is "NEW" or "WORSENED" ? $"{next.ComparisonState}: {next.Title}" : next.Title;
             RecommendationBody.Text = next.NextStep;
         }
         else
@@ -300,7 +302,8 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
-            DiagnosticLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {line}{Environment.NewLine}");
+            var safe = _redaction.RedactForLog(line);
+            DiagnosticLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {safe}{Environment.NewLine}");
             DiagnosticLog.ScrollToEnd();
         });
     }
@@ -338,14 +341,15 @@ public partial class MainWindow : Window
             var result = await _powerShell.RunFileAsync(
                 _engine.CrashDoctorPath,
                 new[] { "-DumpPath", picker.FileName, "-OutputDirectory", output },
-                AppendLog);
-            if (result.ExitCode != 0) throw new InvalidOperationException("Dump analysis failed. See the diagnostic log.");
-            DiagnosticStatusText.Text = "Dump analysis complete";
+                AppendLog,
+                options: new ProcessRunOptions(TimeSpan.FromMinutes(2), OperationId: "dump-analysis"));
+            if (!result.Succeeded) throw new InvalidOperationException($"Dump analysis ended as {result.Status}: {result.FailureReason}");
+            DiagnosticStatusText.Text = $"Dump analysis complete • {result.Duration:g}";
             OpenPath(Path.Combine(output, "crash-doctor-dump-report.md"));
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Dump analysis", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, _redaction.RedactForLog(ex.Message), "Dump analysis", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -368,18 +372,20 @@ public partial class MainWindow : Window
             var install = await _powerShell.RunFileAsync(
                 _engine.IntegrationManagerPath,
                 new[] { "-Action", "install", "-Id", "librehardwaremonitor" },
-                line => Dispatcher.Invoke(() => DeepSensorStatusText.Text = line),
-                _sensorCts.Token);
-            if (install.ExitCode != 0)
-                throw new InvalidOperationException("LibreHardwareMonitor provider could not be prepared.");
+                line => Dispatcher.Invoke(() => DeepSensorStatusText.Text = _redaction.RedactForLog(line)),
+                _sensorCts.Token,
+                new ProcessRunOptions(TimeSpan.FromMinutes(2), MaxRetries: 2, RetryTransientFailures: true, OperationId: "provider-install"));
+            if (!install.Succeeded)
+                throw new InvalidOperationException($"LibreHardwareMonitor provider preparation ended as {install.Status}.");
 
             var output = Path.Combine(_outputRoot, $"sensor-{DateTime.Now:yyyyMMdd-HHmmss}.jsonl");
             DeepSensorStatusText.Text = "Recording deep sensor telemetry for 30 minutes…";
             var sensorTask = _powerShell.RunFileAsync(
                 _engine.IntegrationManagerPath,
                 new[] { "-Action", "sensors", "-DurationMinutes", "30", "-IntervalSeconds", "2", "-OutputPath", output },
-                line => Dispatcher.Invoke(() => DeepSensorStatusText.Text = line),
-                _sensorCts.Token);
+                line => Dispatcher.Invoke(() => DeepSensorStatusText.Text = _redaction.RedactForLog(line)),
+                _sensorCts.Token,
+                new ProcessRunOptions(TimeSpan.FromMinutes(32), OperationId: "sensor-capture"));
 
             for (var second = 0; second < 1800 && !sensorTask.IsCompleted; second++)
             {
@@ -390,8 +396,8 @@ public partial class MainWindow : Window
             }
 
             var result = await sensorTask;
-            if (result.ExitCode != 0)
-                throw new InvalidOperationException("Deep sensor capture ended with an error.");
+            if (!result.Succeeded)
+                throw new InvalidOperationException($"Deep sensor capture ended as {result.Status}.");
             DeepSensorProgress.Value = 100;
             DeepSensorStatusText.Text = $"Complete: {output}";
         }
@@ -401,7 +407,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            DeepSensorStatusText.Text = "Sensor capture failed: " + ex.Message;
+            DeepSensorStatusText.Text = "Sensor capture failed: " + _redaction.RedactForLog(ex.Message);
         }
         finally
         {
@@ -422,14 +428,15 @@ public partial class MainWindow : Window
             var result = await _powerShell.RunFileAsync(
                 _engine.IntegrationManagerPath,
                 new[] { "-Action", "install", "-Id", id },
-                line => Dispatcher.Invoke(() => IntegrationStatusText.AppendText(line + Environment.NewLine)));
-            button.Content = result.ExitCode == 0 ? "Ready" : "Retry";
+                line => Dispatcher.Invoke(() => IntegrationStatusText.AppendText(_redaction.RedactForLog(line) + Environment.NewLine)),
+                options: new ProcessRunOptions(TimeSpan.FromMinutes(2), MaxRetries: 2, RetryTransientFailures: true, OperationId: "integration-install"));
+            button.Content = result.Succeeded ? "Ready" : "Retry";
             await RefreshIntegrationsAsync();
         }
         catch (Exception ex)
         {
             button.Content = "Retry";
-            IntegrationStatusText.AppendText($"{id}: {ex.Message}{Environment.NewLine}");
+            IntegrationStatusText.AppendText($"{id}: {_redaction.RedactForLog(ex.Message)}{Environment.NewLine}");
         }
         finally
         {
@@ -442,14 +449,15 @@ public partial class MainWindow : Window
         try
         {
             _engine.EnsureExtracted();
-            var result = await _powerShell.RunFileAsync(_engine.IntegrationManagerPath, new[] { "-Action", "status" });
+            var result = await _powerShell.RunFileAsync(_engine.IntegrationManagerPath, new[] { "-Action", "status" },
+                options: new ProcessRunOptions(TimeSpan.FromSeconds(45), OperationId: "integration-status"));
             IntegrationStatusText.Text = string.IsNullOrWhiteSpace(result.StandardOutput)
-                ? "Provider status is not available yet."
-                : result.StandardOutput.Trim();
+                ? $"Provider status is not available ({result.Status})."
+                : _redaction.RedactForLog(result.StandardOutput.Trim());
         }
         catch (Exception ex)
         {
-            IntegrationStatusText.Text = "Provider status unavailable: " + ex.Message;
+            IntegrationStatusText.Text = "Provider status unavailable: " + _redaction.RedactForLog(ex.Message);
         }
     }
 
@@ -457,9 +465,18 @@ public partial class MainWindow : Window
 
     private void RefreshHistory()
     {
-        var items = _history.LoadHistory();
-        HistoryList.ItemsSource = items;
-        NoHistoryText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        try
+        {
+            var items = _history.LoadHistory();
+            HistoryList.ItemsSource = items;
+            NoHistoryText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch (Exception ex)
+        {
+            HistoryList.ItemsSource = null;
+            NoHistoryText.Text = "History database unavailable: " + _redaction.RedactForLog(ex.Message);
+            NoHistoryText.Visibility = Visibility.Visible;
+        }
     }
 
     private void RefreshHistory_Click(object sender, RoutedEventArgs e) => RefreshHistory();
@@ -474,8 +491,8 @@ public partial class MainWindow : Window
         }
 
         var answer = MessageBox.Show(this,
-            "Diagnostic bundles can contain usernames, device identifiers, event logs and other private information. Create a local ZIP anyway?",
-            "Export diagnostic bundle",
+            "This is a PRIVATE/FULL export. Diagnostic bundles can contain usernames, device identifiers, event logs and other private information. For sharing, use Privacy-reviewed export instead. Create a local full ZIP?",
+            "Private/full diagnostic export",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
         if (answer != MessageBoxResult.Yes) return;
@@ -483,14 +500,14 @@ public partial class MainWindow : Window
         try
         {
             var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            var zip = Path.Combine(desktop, $"WindowsCrashDoctor-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
+            var zip = Path.Combine(desktop, $"WindowsCrashDoctor-PRIVATE-{DateTime.Now:yyyyMMdd-HHmmss}.zip");
             ZipFile.CreateFromDirectory(_latestEvidencePath, zip, CompressionLevel.Optimal, includeBaseDirectory: true);
             OpenPath(desktop);
-            MessageBox.Show(this, $"Created:\n{zip}", "Export complete", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, $"Created private/full bundle:\n{zip}\n\nDo not share it without a privacy review.", "Export complete", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Export failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, _redaction.RedactForLog(ex.Message), "Export failed", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -545,9 +562,9 @@ public partial class MainWindow : Window
     }
 
     private void DashboardNav_Click(object sender, RoutedEventArgs e) { MainTabs.SelectedIndex = 0; SetPage("System Dashboard", "Live health and the latest diagnostic evidence"); }
-    private void DiagnosticsNav_Click(object sender, RoutedEventArgs e) { MainTabs.SelectedIndex = 1; SetPage("Diagnostics", "Collect and analyse current-machine evidence"); }
+    private void DiagnosticsNav_Click(object sender, RoutedEventArgs e) { MainTabs.SelectedIndex = 1; SetPage("Diagnostics", "Preflight, collect, analyse, fingerprint and compare evidence"); }
     private void SensorsNav_Click(object sender, RoutedEventArgs e) { MainTabs.SelectedIndex = 2; SetPage("Live Sensors", "Watch load and temperature behaviour before a freeze"); }
-    private void HistoryNav_Click(object sender, RoutedEventArgs e) { MainTabs.SelectedIndex = 3; SetPage("Diagnostic History", "Compare previous runs without losing the evidence trail"); RefreshHistory(); }
-    private void IntegrationsNav_Click(object sender, RoutedEventArgs e) { MainTabs.SelectedIndex = 4; SetPage("Integrations", "Optional open-source diagnostic providers with explicit safety boundaries"); _ = RefreshIntegrationsAsync(); }
+    private void HistoryNav_Click(object sender, RoutedEventArgs e) { MainTabs.SelectedIndex = 3; SetPage("Diagnostic History", "SQLite-backed runs and change summaries"); RefreshHistory(); }
+    private void IntegrationsNav_Click(object sender, RoutedEventArgs e) { MainTabs.SelectedIndex = 4; SetPage("Integrations", "Optional providers with bounded retries and explicit health states"); _ = RefreshIntegrationsAsync(); }
     private void SettingsNav_Click(object sender, RoutedEventArgs e) { MainTabs.SelectedIndex = 5; SetPage("Settings", "Appearance, evidence storage and privacy"); }
 }
