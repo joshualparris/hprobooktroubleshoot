@@ -5,13 +5,17 @@ namespace WindowsCrashDoctor;
 
 public partial class App : Application
 {
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
         if (e.Args.Any(a => string.Equals(a, "--self-test", StringComparison.OrdinalIgnoreCase)))
         {
-            Shutdown(DesktopSelfTest.Run());
+            // DesktopSelfTest includes synchronous calls into async process-runner code.
+            // Keep it off the WPF dispatcher so library awaits cannot deadlock by trying
+            // to resume on the UI thread that is synchronously waiting for completion.
+            var exitCode = await Task.Run(DesktopSelfTest.Run);
+            Shutdown(exitCode);
             return;
         }
 
