@@ -61,15 +61,16 @@ jobs:
           }
 
       - name: Install PowerShell QA modules
-        shell: powershell
+        shell: pwsh
         run: |
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
-          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck -Confirm:$false
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -Confirm:$false
 
       - name: Run PSScriptAnalyzer errors gate
-        shell: powershell
+        shell: pwsh
         run: |
           Import-Module PSScriptAnalyzer
           $issues = @()
@@ -89,7 +90,7 @@ jobs:
         run: .\windows-crash-doctor\tests\integration-self-test.ps1 -RepositoryMode
 
       - name: Run Pester integration tests
-        shell: powershell
+        shell: pwsh
         run: |
           Import-Module Pester -MinimumVersion 5.5.0
           $config = New-PesterConfiguration
