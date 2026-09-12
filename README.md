@@ -15,6 +15,7 @@ The core rule is simple: keep **observation**, **current-machine telemetry**, **
 - Markdown + JSON reports;
 - synthetic Windows regression tests;
 - public-evidence/BitLocker recovery-key guard;
+- one-command installer plus desktop double-click launcher;
 - documented HP ProBook evidence and controlled test plan.
 
 **Not yet implemented on `main`:**
@@ -27,7 +28,21 @@ The core rule is simple: keep **observation**, **current-machine telemetry**, **
 
 Those gaps are now tracked individually in the **[100-item Windows Crash Doctor roadmap](docs/ROADMAP_100.md)**, derived from a benchmark against ten established diagnostic tools.
 
-## Quick start
+## Easiest install on the ProBook
+
+Open ordinary PowerShell and paste this single line:
+
+```powershell
+$p="$env:TEMP\Install-WindowsCrashDoctor.ps1"; Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/joshualparris/hprobooktroubleshoot/main/scripts/Install-WindowsCrashDoctor.ps1" -OutFile $p; powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p
+```
+
+The installer requests Administrator rights through the normal UAC prompt, downloads the current `main` build, installs it under `%LOCALAPPDATA%\WindowsCrashDoctor\App`, creates **Windows Crash Doctor.cmd** on the Desktop, runs the built-in regression/integration self-tests, then immediately performs the first real diagnostic collection and analysis.
+
+For a double-click install instead, download [`INSTALL-WINDOWS-CRASH-DOCTOR.cmd`](INSTALL-WINDOWS-CRASH-DOCTOR.cmd) and run it. After installation, double-click **Windows Crash Doctor.cmd** on the Desktop whenever you want a fresh diagnostic run.
+
+Each one-click run creates a timestamped folder under **Windows Crash Doctor Results** on the Desktop, runs the self-tests, collects current machine evidence, generates `crash-doctor-report.md` and `crash-doctor-report.json`, records optional-provider status, then opens the result folder and report.
+
+## Manual quick start
 
 Open an elevated Windows PowerShell prompt in the repository.
 
@@ -143,8 +158,9 @@ conversation/             conversation-archive provenance notes
 docs/                     product architecture, research and roadmap
 evidence/                 evidence workflow and SHA-256 manifests
 raw/                      explicitly documented raw/archive boundary
-scripts/                  collection, hashing and public-evidence guard
-windows-crash-doctor/     current Crash Doctor engine, CLI and tests
+scripts/                  collection, installation, hashing and public-evidence guard
+windows-crash-doctor/     current Crash Doctor engine, CLI, runner and tests
+INSTALL-WINDOWS-CRASH-DOCTOR.cmd  double-click bootstrap installer
 SECURITY_NOTICE.md        privacy/security rules
 ```
 
