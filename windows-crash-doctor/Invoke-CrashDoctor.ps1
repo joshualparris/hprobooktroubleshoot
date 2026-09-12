@@ -1,151 +1,120 @@
 [CmdletBinding(DefaultParameterSetName = 'Evidence')]
 param(
-    [Parameter(Mandatory = $true, ParameterSetName = 'Evidence')] [string]$EvidencePath,
-    [Parameter(Mandatory = $true, ParameterSetName = 'Dump')] [string]$DumpPath,
+    [Parameter(Mandatory = $true, ParameterSetName = 'Evidence')]
+    [string]$EvidencePath,
+
+    [Parameter(Mandatory = $true, ParameterSetName = 'Dump')]
+    [string]$DumpPath,
+
     [string]$OutputDirectory,
     [switch]$PassThru
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function ConvertTo-CrashDoctorDumpMarkdown {
-    param([Parameter(Mandatory = $true)]$Report)
+$coreModulePath = Join-Path $PSScriptRoot 'CrashDoctor.psm1'
+$dumpModulePath = Join-Path $PSScriptRoot 'DumpParser.psm1'
+$telemetryModulePath = Join-Path $PSScriptRoot 'TelemetryAnalysis.psm1'
+$reportingModulePath = Join-Path $PSScriptRoot 'Reporting.psm1'
 
-    $lines = New-Object System.Collections.Generic.List[string]
-    $lines.Add('# Windows Crash Doctor dump report')
-    $lines.Add('')
-    $lines.Add("Dump: ``$($Report.Path)``")
-    $lines.Add('')
-    $lines.Add("- **Format:** $($Report.Format)")
-    $lines.Add("- **Architecture:** $($Report.Architecture)")
-    $lines.Add("- **File size:** $($Report.FileSize) bytes")
-    $lines.Add("- **Parser coverage:** $($Report.ParseCoverage)")
-
-    if ($Report.Format -eq 'MiniDump') {
-        $lines.Add('')
-        $lines.Add('## Minidump summary')
-        $lines.Add('')
-        $lines.Add("- Streams: $($Report.Header.NumberOfStreams)")
-        $lines.Add("- Threads: $($Report.ThreadCount)")
-        $lines.Add("- Modules: $($Report.ModuleCount)")
-        if ($Report.SystemInfo) {
-            $lines.Add("- Windows: $($Report.SystemInfo.MajorVersion).$($Report.SystemInfo.MinorVersion) build $($Report.SystemInfo.BuildNumber)")
-            $lines.Add("- Processors: $($Report.SystemInfo.NumberOfProcessors)")
-        }
-        if ($Report.Exception) {
-            $lines.Add("- Exception thread: $($Report.Exception.ThreadId)")
-            $lines.Add(('- Exception code: `0x{0:X8}`' -f $Report.Exception.ExceptionCode))
-            $lines.Add(('- Exception address: `0x{0:X16}`' -f $Report.Exception.ExceptionAddress))
-        }
-
-        if ($Report.Modules.Count -gt 0) {
-            $lines.Add('')
-            $lines.Add('## Modules')
-            $lines.Add('')
-            $lines.Add('| Module | Base | Size |')
-            $lines.Add('|---|---:|---:|')
-            foreach ($module in $Report.Modules) {
-                $name = if ($module.Name) { $module.Name.Replace('|', '\|') } else { '(name unavailable)' }
-                $lines.Add(('| {0} | `0x{1:X16}` | {2} |' -f $name, $module.BaseOfImage, $module.SizeOfImage))
-            }
-        }
-
-        $lines.Add('')
-        $lines.Add('## Streams')
-        $lines.Add('')
-        $lines.Add('| Type | Name | Bytes | RVA |')
-        $lines.Add('|---:|---|---:|---:|')
-        foreach ($stream in $Report.Streams) {
-            $lines.Add("| $($stream.StreamType) | $($stream.Name) | $($stream.DataSize) | $($stream.Rva) |")
-        }
+foreach ($requiredModule in @($coreModulePath, $dumpModulePath, $telemetryModulePath, $reportingModulePath)) {
+    if (-not (Test-Path -LiteralPath $requiredModule -PathType Leaf)) {
+        throw "Required Crash Doctor module is missing: $requiredModule"
     }
-    elseif ($Report.Format -eq 'KernelCrashDump') {
-        $lines.Add('')
-        $lines.Add('## Kernel crash header')
-        $lines.Add('')
-        $lines.Add("- Valid marker: $($Report.Header.ValidDump)")
-        $lines.Add("- Windows version fields: $($Report.Header.MajorVersion).$($Report.Header.MinorVersion)")
-        $lines.Add("- Processors: $($Report.Header.NumberProcessors)")
-        $lines.Add(('- Bugcheck: `0x{0:X8}`' -f $Report.Header.BugCheckCode))
-        $lines.Add(('- Parameters: `0x{0:X}` `0x{1:X}` `0x{2:X}` `0x{3:X}`' -f $Report.Header.BugCheckParameter1, $Report.Header.BugCheckParameter2, $Report.Header.BugCheckParameter3, $Report.Header.BugCheckParameter4))
-        if ($null -ne $Report.Header.PSObject.Properties['DumpTypeName']) {
-            $lines.Add("- Dump type: $($Report.Header.DumpTypeName) ($($Report.Header.DumpType))")
-        }
+}
+
+Import-Module $reportingModulePath -Force
+
+function Resolve-WcdOutputDirectory {
+    param(
+        [AllowNull()] [string]$RequestedDirectory,
+        [Parameter(Mandatory = $true)] [string]$DefaultDirectory
+    )
+
+    $directory = if ([string]::IsNullOrWhiteSpace($RequestedDirectory)) { $DefaultDirectory } else { $RequestedDirectory }
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+        New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop | Out-Null
     }
 
-    $lines.Add('')
-    $lines.Add('> Parsing a dump identifies evidence contained in the file; it does not by itself establish root cause. Symbolization, stack unwinding and memory traversal are separate roadmap capabilities.')
-    return ($lines -join [Environment]::NewLine)
+    return (Resolve-Path -LiteralPath $directory).Path
+}
+
+function Write-WcdReportFiles {
+    param(
+        [Parameter(Mandatory = $true)] [string]$Directory,
+        [Parameter(Mandatory = $true)] [string]$MarkdownFileName,
+        [Parameter(Mandatory = $true)] [string]$JsonFileName,
+        [Parameter(Mandatory = $true)] [string]$Markdown,
+        [Parameter(Mandatory = $true)]$Report
+    )
+
+    $markdownPath = Join-Path $Directory $MarkdownFileName
+    $jsonPath = Join-Path $Directory $JsonFileName
+    $Markdown | Out-File -LiteralPath $markdownPath -Encoding utf8 -Width 500 -ErrorAction Stop
+    $Report | ConvertTo-Json -Depth 20 | Out-File -LiteralPath $jsonPath -Encoding utf8 -Width 1000 -ErrorAction Stop
+
+    return [pscustomobject][ordered]@{
+        MarkdownPath = $markdownPath
+        JsonPath     = $jsonPath
+    }
 }
 
 if ($PSCmdlet.ParameterSetName -eq 'Dump') {
-    $dumpModulePath = Join-Path $PSScriptRoot 'DumpParser.psm1'
     Import-Module $dumpModulePath -Force
 
+    if (-not (Test-Path -LiteralPath $DumpPath -PathType Leaf)) {
+        throw "Dump file does not exist: $DumpPath"
+    }
     $resolvedDump = (Resolve-Path -LiteralPath $DumpPath).Path
-    if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-        $OutputDirectory = Split-Path -Parent $resolvedDump
-    }
-    if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
-        New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-    }
+    $defaultOutput = Split-Path -Parent $resolvedDump
+    $resolvedOutput = Resolve-WcdOutputDirectory -RequestedDirectory $OutputDirectory -DefaultDirectory $defaultOutput
 
     $report = Get-CrashDoctorDumpInfo -Path $resolvedDump
     $markdown = ConvertTo-CrashDoctorDumpMarkdown -Report $report
-    $markdownPath = Join-Path $OutputDirectory 'crash-doctor-dump-report.md'
-    $jsonPath = Join-Path $OutputDirectory 'crash-doctor-dump-report.json'
+    $paths = Write-WcdReportFiles -Directory $resolvedOutput `
+        -MarkdownFileName 'crash-doctor-dump-report.md' `
+        -JsonFileName 'crash-doctor-dump-report.json' `
+        -Markdown $markdown `
+        -Report $report
 
-    $markdown | Out-File -LiteralPath $markdownPath -Encoding utf8 -Width 500
-    $report | ConvertTo-Json -Depth 12 | Out-File -LiteralPath $jsonPath -Encoding utf8 -Width 500
-
-    Write-Host "Crash Doctor dump report: $markdownPath"
-    Write-Host "Machine-readable dump report: $jsonPath"
-
-    if ($PassThru) { return $report }
+    Write-Host "Crash Doctor dump report: $($paths.MarkdownPath)"
+    Write-Host "Machine-readable dump report: $($paths.JsonPath)"
+    if ($PassThru) {
+        return $report
+    }
     return
 }
 
-$coreModulePath = Join-Path $PSScriptRoot 'CrashDoctor.psm1'
-$telemetryModulePath = Join-Path $PSScriptRoot 'TelemetryAnalysis.psm1'
 Import-Module $coreModulePath -Force
-if (Test-Path -LiteralPath $telemetryModulePath -PathType Leaf) {
-    Import-Module $telemetryModulePath -Force
-}
+Import-Module $telemetryModulePath -Force
 
-if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = $EvidencePath
+if (-not (Test-Path -LiteralPath $EvidencePath -PathType Container)) {
+    throw "Evidence path does not exist or is not a directory: $EvidencePath"
 }
+$resolvedEvidence = (Resolve-Path -LiteralPath $EvidencePath).Path
+$resolvedOutput = Resolve-WcdOutputDirectory -RequestedDirectory $OutputDirectory -DefaultDirectory $resolvedEvidence
 
-if (-not (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
-    New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
-}
-
-$report = Invoke-CrashDoctorAnalysis -EvidencePath $EvidencePath
-$telemetry = $null
-if (Get-Command Invoke-CrashDoctorTelemetryAnalysis -ErrorAction SilentlyContinue) {
-    $telemetry = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $EvidencePath
-    if ($telemetry.Available) {
-        $report = Add-CrashDoctorTelemetryToReport -Report $report -Telemetry $telemetry
-    }
+$report = Invoke-CrashDoctorAnalysis -EvidencePath $resolvedEvidence
+$telemetry = Invoke-CrashDoctorTelemetryAnalysis -EvidencePath $resolvedEvidence
+if ($telemetry.Available -or @($telemetry.Errors).Count -gt 0) {
+    $report = Add-CrashDoctorTelemetryToReport -Report $report -Telemetry $telemetry
 }
 
 $markdown = ConvertTo-CrashDoctorMarkdown -Report $report
-if ($null -ne $telemetry -and $telemetry.Available) {
-    $telemetryMarkdown = ConvertTo-CrashDoctorTelemetryMarkdownSection -Telemetry $telemetry
-    if (-not [string]::IsNullOrWhiteSpace($telemetryMarkdown)) {
-        $markdown += [Environment]::NewLine + [Environment]::NewLine + $telemetryMarkdown
-    }
+$telemetryMarkdown = ConvertTo-CrashDoctorTelemetryMarkdownSection -Telemetry $telemetry
+if (-not [string]::IsNullOrWhiteSpace($telemetryMarkdown)) {
+    $markdown += [Environment]::NewLine + [Environment]::NewLine + $telemetryMarkdown
 }
 
-$markdownPath = Join-Path $OutputDirectory 'crash-doctor-report.md'
-$jsonPath = Join-Path $OutputDirectory 'crash-doctor-report.json'
+$paths = Write-WcdReportFiles -Directory $resolvedOutput `
+    -MarkdownFileName 'crash-doctor-report.md' `
+    -JsonFileName 'crash-doctor-report.json' `
+    -Markdown $markdown `
+    -Report $report
 
-$markdown | Out-File -LiteralPath $markdownPath -Encoding utf8 -Width 500
-$report | ConvertTo-Json -Depth 12 | Out-File -LiteralPath $jsonPath -Encoding utf8 -Width 500
-
-Write-Host "Crash Doctor report: $markdownPath"
-Write-Host "Machine-readable report: $jsonPath"
-
+Write-Host "Crash Doctor report: $($paths.MarkdownPath)"
+Write-Host "Machine-readable report: $($paths.JsonPath)"
 if ($PassThru) {
     return $report
 }
