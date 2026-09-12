@@ -92,6 +92,10 @@ jobs:
             exit 1
           }
 
+      - name: Run code-principles invariant test
+        shell: powershell
+        run: .\windows-crash-doctor\tests\principles-self-test.ps1
+
       - name: Run Windows Crash Doctor self-test
         shell: powershell
         run: .\windows-crash-doctor\tests\self-test.ps1 -RepositoryMode
