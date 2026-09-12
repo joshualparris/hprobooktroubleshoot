@@ -33,3 +33,9 @@ Deleting a secret in a later commit does not remove it from prior Git history. I
 ## Repository convention
 
 `evidence/raw/` is intentionally ignored by default. Raw evidence should be stored privately unless there is a deliberate decision to publish a reviewed copy.
+
+## Automated guard
+
+`scripts/check-public-evidence.ps1` scans committed text-like files for the eight-group numeric pattern used by BitLocker 48-digit recovery passwords. GitHub Actions runs it on every push and pull request.
+
+This is a **narrow safety net, not a complete secret scanner**. It will not reliably detect every password, token, private identifier or sensitive log field, so human review remains required.
