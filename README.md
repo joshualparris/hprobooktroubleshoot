@@ -39,7 +39,7 @@ See [`analysis/MASTER_ANALYSIS.md`](analysis/MASTER_ANALYSIS.md) for the detaile
 
 ## Working diagnostic engine
 
-The repository now includes **Windows Crash Doctor**, a read-only PowerShell rule engine that analyses a collector snapshot and produces both Markdown and JSON reports.
+The repository includes **Windows Crash Doctor**, a read-only PowerShell rule engine that analyses a collector snapshot and produces both Markdown and JSON reports.
 
 ```powershell
 .\windows-crash-doctor\Invoke-CrashDoctor.ps1 `
@@ -48,7 +48,25 @@ The repository now includes **Windows Crash Doctor**, a read-only PowerShell rul
 
 It currently detects the evidence patterns that matter most in this case — firmware Code 10, current firmware-resource state, Sysprep/reused-image history, XTU/Conexant presence, dump-capture risk, storage counters, BitLocker conversion context, WHEA, Event 41 and volmgr 161 — while keeping **evidence**, **interpretation**, **confidence** and **next step** separate.
 
-See [`windows-crash-doctor/README.md`](windows-crash-doctor/README.md) and [`docs/WINDOWS_CRASH_DOCTOR_PLAN.md`](docs/WINDOWS_CRASH_DOCTOR_PLAN.md).
+### Optional open-source providers
+
+Crash Doctor now has an explicit provider layer instead of copying third-party repositories into this project. It can securely acquire selected official GitHub release assets and use them as separate evidence providers:
+
+- LibreHardwareMonitor for live sensor telemetry;
+- smartmontools / `smartctl` for deep storage evidence when installed;
+- `evtx_dump` for raw EVTX conversion;
+- Hayabusa for opt-in event timelines;
+- osquery for structured inventory;
+- PerfView for a later manual ETW tracing stage;
+- Pester and PSScriptAnalyzer as CI quality gates.
+
+```powershell
+.\windows-crash-doctor\Manage-Integrations.ps1 -Action status
+```
+
+Official release assets with GitHub SHA-256 digests are verified before activation. Downloaded tools stay outside Git under `%LOCALAPPDATA%\WindowsCrashDoctor\Tools` by default. Privileged or rebooting tools such as CHIPSEC and Memtest86+ are catalogued but deliberately cannot be auto-run.
+
+See [`windows-crash-doctor/README.md`](windows-crash-doctor/README.md), [`docs/WINDOWS_CRASH_DOCTOR_PLAN.md`](docs/WINDOWS_CRASH_DOCTOR_PLAN.md) and [`docs/OPEN_SOURCE_INTEGRATIONS.md`](docs/OPEN_SOURCE_INTEGRATIONS.md).
 
 A repository-wide CI guard also blocks accidental commits containing a BitLocker-style 48-digit recovery password.
 
@@ -117,12 +135,16 @@ scripts/
   check-public-evidence.ps1   narrow public-repo secret guard
 
 windows-crash-doctor/
-  CrashDoctor.psm1            evidence parser + rule engine
+  CrashDoctor.psm1            snapshot evidence parser + rule engine
   Invoke-CrashDoctor.ps1      CLI/report writer
-  tests/self-test.ps1         synthetic regression/self-test
+  Integrations.psm1           optional OSS provider layer
+  Manage-Integrations.ps1     provider status/install/run CLI
+  integrations/catalog.json   machine-readable upstream/licence/risk catalogue
+  tests/                       dependency-free + Pester regression suites
 
 docs/
   WINDOWS_CRASH_DOCTOR_PLAN.md architecture, rule contract and roadmap
+  OPEN_SOURCE_INTEGRATIONS.md  upstream provider, licence and supply-chain policy
 
 SECURITY_NOTICE.md          public-repository privacy/redaction rules
 ```
