@@ -18,6 +18,8 @@ The BitLocker recovery password exposed during this investigation must stay out 
 
 EVTX files, `msinfo32` exports, SetupAPI logs, sleep reports, crash dumps and screenshots can contain usernames, machine names, paths, device identifiers, network details and fragments of other private data.
 
+Windows Crash Doctor runtime data under `%ProgramData%\WindowsCrashDoctor` must also be treated as sensitive. Canary JSONL, incident bundles, reports and the ledger can contain process names, device identifiers, event messages and machine metadata. The app writes this data locally; it does not upload it automatically.
+
 Before publishing raw evidence:
 
 1. Keep an untouched private original.
@@ -33,3 +35,5 @@ Deleting a secret in a later commit does not remove it from prior Git history. I
 ## Repository convention
 
 `evidence/raw/` is intentionally ignored by default. Raw evidence should be stored privately unless there is a deliberate decision to publish a reviewed copy.
+
+`dist/` is generated packaging output and is ignored in source control. Release ZIPs should be produced by the Windows CI workflow or `scripts/package-windows-crash-doctor.ps1`, then verified by SHA-256.
