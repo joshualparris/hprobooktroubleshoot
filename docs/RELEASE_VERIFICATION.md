@@ -62,33 +62,65 @@ Those are separate post-P0/stable-release improvements.
 
 | Capability | Source status | Verification status / limitation |
 |---|---|---|
-| HWiNFO CSV telemetry | Implemented | Repository telemetry regression coverage exists. |
+| HWiNFO CSV telemetry | Implemented | Repository telemetry regression coverage exists and is green on the latest reviewed gate. |
 | LibreHardwareMonitor JSONL telemetry | Implemented | Uses the same telemetry finding path; missing provider-specific signals remain unknown rather than invented healthy evidence. |
-| Embedded telemetry engine | Implemented | `TelemetryAnalysis.psm1`, registry and version files are embedded in the desktop EXE. Product-Gate verification requires the packaged EXE self-test to pass. |
-| Privacy-reviewed shareable export | Implemented | Preview, default high-risk exclusions, redacted text derivatives, secret-pattern metadata and `export-manifest.json` are covered by the desktop self-test. The scanner is conservative, not exhaustive. |
+| Embedded telemetry engine | Implemented | `TelemetryAnalysis.psm1`, registry and version files are embedded. The latest packaged EXE reached report validation successfully, so embedded telemetry is no longer the current packaged blocker. |
+| Privacy-reviewed shareable export | Implemented | Preview, default high-risk exclusions, redacted text derivatives, secret-pattern metadata and `export-manifest.json` exist. The current packaged self-test has not reached this stage because it blocks earlier in the runner-timeout self-test. |
 | GUI/CLI installer SHA-256 verification | Implemented | Both installers verify downloaded release assets before activation/execution. The EXE remains unsigned. |
 | SQLite run ledger | Implemented | `history.db` stores runs, findings, collector executions and comparisons, with legacy JSON migration. Current packaged self-test does not independently exercise every SQLite path. |
 | Finding/evidence fingerprints | Implemented | SHA-256 fingerprints are attached to findings/evidence bundles and persisted. |
-| Previous-run comparison | Implemented | NEW/RESOLVED/IMPROVED/WORSENED/UNCHANGED/UNKNOWN logic is integrated; basic comparison semantics are self-tested, while not every state has a dedicated fixture yet. |
-| Preflight | Implemented | Runs before diagnosis and can block unavailable hard prerequisites; several optional checks degrade rather than abort. No separate full WPF preflight automation exists yet. |
+| Previous-run comparison | Implemented | NEW/RESOLVED/IMPROVED/WORSENED/UNCHANGED/UNKNOWN logic is integrated; basic comparison semantics are self-tested, but the current packaged run blocks before reaching its comparison self-test. |
+| Preflight | Implemented | Runs before diagnosis and can block unavailable hard prerequisites; optional checks degrade rather than abort. No separate full WPF preflight automation exists yet. |
 | Diagnostic registry | Partially complete against the v2 roadmap | Canonical metadata/coverage/provenance registry exists and is shared by CLI/desktop. Collector command dispatch is not yet wholly generated from the registry. |
-| Timeout/cancellation/retry runner | Partially complete against the v2 roadmap | Process runner has bounded timeout, cancellation, process-tree termination, retry classification/backoff and execution metadata. Per-diagnostic records for the monolithic collector are still partly inferred from evidence-file outcomes rather than each probe being an independently timed execution. |
+| Timeout/cancellation/retry runner | Partially complete against the v2 roadmap and current release blocker | Structured timeout/cancellation/process-tree/retry code exists, but the packaged runner-timeout self-test currently hangs instead of completing, so this path is **not release verified**. Per-diagnostic records for the monolithic collector are also still partly inferred from evidence-file outcomes. |
 
-## Current A3 verification snapshot
+## Current A3 verification snapshot — 12 September 2026
 
-A3 branched from main commit `a7d811578dd9e4696bd759124e2424d0907ac56f` on 12 September 2026 while A1 telemetry/cardinality work was still advancing `main`.
+A3's documentation branch was created while A1 continued advancing `main`. The latest intended `main` commit independently reviewed in this snapshot is:
 
-The latest **completed** Product Gate independently reviewed before that branch was run `34683833695` for commit `a6afed717b8cf999d41d9ba946302d37cac0bff0`. Parser, PSScriptAnalyzer, core snapshot tests, dump tests, Pester/integrations, public-evidence guard and desktop compilation all passed, but the packaged EXE self-test failed inside embedded HWiNFO telemetry analysis. The release bundle/upload and canary publication were therefore skipped.
+`6434129554a8b0032dd003e362a41c280fe96802` — `ci: bound packaged EXE smoke test`
 
-At that point the rolling canary still targeted older commit `b1f4b1f4b13eef4f55b83788a63cd4c956335ba4` and contained only the older EXE/checksum pair, not the current `0.3.0-preview.1` verified release-manifest contract.
+Its Product Gate is run **`34685040530`**.
 
-**Therefore that older rolling canary must not be described as the current Product-Gate-verified v0.3 build.** After A1 obtains a green gate, A3 must update this section only after independently confirming the exact successful run, verified artifact, manifest/hash assets and canary target commit.
+### What passed for that exact commit
+
+- PowerShell parser: **passed**;
+- PSScriptAnalyzer error gate: **passed**;
+- core snapshot + telemetry + integration self-tests: **passed**;
+- synthetic dump parser + real DbgHelp minidump smoke: **passed**;
+- Pester integration suite: **passed**;
+- public evidence guard: **passed**;
+- self-contained desktop build: **passed**;
+- embedded engine extraction/registry/telemetry/report validation inside `WindowsCrashDoctor.exe --self-test`: **progressed successfully to the next stage**.
+
+### What failed
+
+The packaged EXE self-test hit its outer **120-second watchdog**. Its last recorded internal stage was:
+
+`runner-timeout`
+
+The workflow therefore failed the packaged EXE step. This is now the precise P0/v2 release blocker: the timeout/cancellation cleanup self-test inside the packaged executable does not complete on the GitHub Windows runner.
+
+Because that step failed:
+
+- release bundle/manifest creation was **skipped**;
+- verified release artifact upload was **skipped**;
+- canary publication was **skipped**;
+- run `34685040530` has **no verified release artifact**.
+
+The rolling canary still targets older commit:
+
+`b1f4b1f4b13eef4f55b83788a63cd4c956335ba4`
+
+and currently contains only the older `WindowsCrashDoctor.exe` plus `WindowsCrashDoctor.exe.sha256`. It does **not** contain the new `release-manifest.json` / engine ZIP / installer hash bundle required by the v0.3 Product Gate contract.
+
+**Therefore the rolling canary must not currently be described as the Product-Gate-verified `0.3.0-preview.1` build.**
 
 ## Release acceptance checklist
 
-A3 may call the current canary verified only when all of these are true for the same commit:
+A3 may call the current `0.3.0-preview.1` canary verified only when all of these are true for the same intended commit:
 
-- [ ] latest intended `main` commit is identified;
+- [x] intended `main` commit for this verification snapshot identified (`6434129554a8b0032dd003e362a41c280fe96802`);
 - [ ] Product Gate conclusion is `success`;
 - [ ] packaged EXE self-test step is `success`;
 - [ ] verified release artifact `WindowsCrashDoctor-verified-<commit>` exists;
@@ -102,15 +134,15 @@ A3 may call the current canary verified only when all of these are true for the 
 
 ### P0 / v2 release-completion work
 
-The immediate release-completion requirement is to make the packaged executable pass the Product Gate and prove the release handoff/published canary for the same commit. Documentation truthfulness is part of that completion work.
+The immediate release-completion requirement is now narrowly defined: make the packaged **runner-timeout self-test** complete correctly, then obtain a green Product Gate and prove the release handoff/published canary for that same commit. Documentation truthfulness is part of that completion work.
 
 ### Implemented v2 architecture that is no longer merely “planned”
 
-SQLite run history, fingerprints, previous-run comparison, preflight, registry-backed coverage/provenance, privacy-reviewed export and resilient process execution are now real source capabilities. Some original roadmap acceptance criteria remain partial as described above.
+SQLite run history, fingerprints, previous-run comparison, preflight, registry-backed coverage/provenance, privacy-reviewed export and resilient-process infrastructure are real source capabilities. Some original roadmap acceptance criteria remain partial as described above, and a source capability is not automatically a release-verified capability.
 
 ### Future/post-P0 stable-release improvements
 
-These remain unfinished and should not be implied by a green canary:
+These remain unfinished and should not be implied by a future green canary:
 
 - Authenticode/code signing and publisher trust;
 - immutable semantic stable release channel separate from the rolling canary;
