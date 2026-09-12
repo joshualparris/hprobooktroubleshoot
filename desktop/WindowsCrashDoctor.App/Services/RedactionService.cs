@@ -21,7 +21,7 @@ public sealed class RedactionService
         new("aws-access-key-id", new Regex(@"\b(?:AKIA|ASIA|AIDA|AROA|AIPA|ANPA|ANVA)[A-Z0-9]{16}\b", RegexOptions.Compiled), "[REDACTED_AWS_ACCESS_KEY_ID]"),
         new("jwt", new Regex(@"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b", RegexOptions.Compiled), "[REDACTED_JWT]"),
         new("bearer-token", new Regex(@"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}", RegexOptions.Compiled), "Bearer [REDACTED_TOKEN]"),
-        new("credential-field", new Regex(@"(?im)(\b(?:password|passwd|pwd|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret)\b\s*[:=]\s*)(?!\[REDACTED_)([^\s,;\"']+|\"[^\"]*\"|'[^']*')", RegexOptions.Compiled), "$1[REDACTED_SECRET]"),
+        new("credential-field", new Regex(@"(?im)(\b(?:password|passwd|pwd|api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret)\b\s*[:=]\s*)(?!\[REDACTED_)([^\s,;]+)", RegexOptions.Compiled), "$1[REDACTED_SECRET]"),
         new("email-address", new Regex(@"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", RegexOptions.Compiled | RegexOptions.IgnoreCase), "[REDACTED_EMAIL]"),
         new("windows-user-path", new Regex(@"(?i)C:\\Users\\[^\\\s]+", RegexOptions.Compiled), @"C:\Users\[REDACTED_USER]"),
         new("mac-address", new Regex(@"(?i)\b(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}\b", RegexOptions.Compiled), "[REDACTED_MAC]")
