@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
@@ -117,7 +118,14 @@ public sealed class PrivacyExportService
         }
         finally
         {
-            try { Directory.Delete(staging, recursive: true); } catch { }
+            try
+            {
+                Directory.Delete(staging, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"Privacy-export staging cleanup failed: {ex.Message}");
+            }
         }
     }
 
@@ -142,8 +150,9 @@ public sealed class PrivacyExportService
             var result = _redaction.Redact(text);
             return new(relativePath, true, null, result.Count, file.Length, result.Matches);
         }
-        catch
+        catch (Exception ex)
         {
+            Trace.WriteLine($"Privacy scan excluded '{relativePath}': {ex.GetType().Name}");
             return new(relativePath, false, "File could not be safely scanned as text; excluded by default.", 0, file.Length);
         }
     }
