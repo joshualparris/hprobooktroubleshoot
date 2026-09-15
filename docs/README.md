@@ -10,6 +10,9 @@ This repository has two kinds of documentation and they should not be confused:
 | Need | Document |
 |---|---|
 | Understand the whole repository | [`../README.md`](../README.md) |
+| See the live/public case dashboard source | [`../index.html`](../index.html) |
+| See the purchase, seller assessment and honest eBay-review wording | [`PURCHASE_SELLER_AND_EBAY_REVIEW.md`](PURCHASE_SELLER_AND_EBAY_REVIEW.md) |
+| See the safe cross-chat ProBook case history | [`../conversation/CONSOLIDATED_CASE_HISTORY_2026-09-15.md`](../conversation/CONSOLIDATED_CASE_HISTORY_2026-09-15.md) |
 | See the current engineering quality/risk audit and highest-priority fixes | [`REPOSITORY_AUDIT.md`](REPOSITORY_AUDIT.md) |
 | See what was implemented for the audit's Phase 0 blockers | [`PHASE0_IMPLEMENTATION_2026-09-12.md`](PHASE0_IMPLEMENTATION_2026-09-12.md) |
 | Run Windows Crash Doctor | [`../windows-crash-doctor/README.md`](../windows-crash-doctor/README.md) |
@@ -37,11 +40,15 @@ When documents disagree, use this order:
 8. `GITHUB_BORROW_ROADMAP.md` for planned cross-repository adaptations and implementation sequencing.
 9. `ROADMAP_100.md` for the broader unimplemented product backlog.
 
+`PURCHASE_SELLER_AND_EBAY_REVIEW.md` and the public dashboard are consumer-facing summaries. They must remain consistent with the case source of truth above and must not upgrade a hypothesis into a fact.
+
 A roadmap item is not a statement that a feature already exists. An audit finding is not resolved merely because implementation code exists; it should be marked resolved only when the relevant acceptance test/release evidence proves the end-to-end behaviour.
 
 ## Case records
 
 The files in `analysis/` are investigation records. They are intentionally not rewritten just to make the product documentation look cleaner; doing so could blur when a conclusion was reached and what evidence supported it. Navigation and current-state corrections belong in `STATUS.md`, while historical reasoning remains traceable in the original analysis documents.
+
+The consolidated cross-chat history under `conversation/` is a safe synthesis rather than a verbatim archive. Similar ProBook-family chats are not merged into this physical-device timeline unless machine identity is established.
 
 ## Audit maintenance
 
@@ -55,3 +62,4 @@ The files in `analysis/` are investigation records. They are intentionally not r
 - Keep risky actions explicit and separate from read-only diagnosis.
 - Link every public evidence claim to its provenance where practical.
 - Treat dump files, ETL traces, EVTX, WER reports and screenshots as potentially sensitive.
+- Never publish BitLocker recovery passwords, replacement recovery keys, credentials or unreviewed identifying logs.
