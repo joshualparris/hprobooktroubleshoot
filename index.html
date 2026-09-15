@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HP ProBook 11 G2 — Case Dashboard</title>
+  <meta name="description" content="Evidence-aware dashboard for the HP ProBook 11 G2 hard-freeze investigation and Windows Crash Doctor." />
+  <style>
+    :root{color-scheme:light dark;--bg:#f5f7fb;--card:#fff;--ink:#172033;--muted:#5d6678;--line:#dfe4ec;--good:#126b43;--warn:#8a5b00;--bad:#9f2d2d;--accent:#2156a5}
+    @media(prefers-color-scheme:dark){:root{--bg:#0f141c;--card:#171e29;--ink:#edf2f7;--muted:#aab4c3;--line:#2d3748;--good:#75d7aa;--warn:#ffd27a;--bad:#ff9b9b;--accent:#8db7ff}}
+    *{box-sizing:border-box}body{margin:0;font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+    main{max-width:1050px;margin:auto;padding:28px 18px 60px}.hero{padding:26px 0 8px}.kicker{font-weight:700;color:var(--accent);letter-spacing:.04em;text-transform:uppercase;font-size:.78rem}.hero h1{font-size:clamp(2rem,5vw,3.8rem);line-height:1.02;margin:.3rem 0 1rem}.lede{max-width:760px;color:var(--muted);font-size:1.08rem}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:22px 0}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 8px 24px rgba(0,0,0,.05)}.card h2,.card h3{margin-top:0}.metric{font-size:1.8rem;font-weight:800}.muted{color:var(--muted)}
+    .good{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+    table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-size:.85rem;text-transform:uppercase;letter-spacing:.03em}
+    blockquote{margin:12px 0;padding:14px 18px;border-left:4px solid var(--accent);background:color-mix(in srgb,var(--card) 90%,var(--accent) 10%);border-radius:8px}
+    a{color:var(--accent)}.actions{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0}.button{display:inline-block;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);text-decoration:none;font-weight:700}.button.primary{background:var(--accent);color:white;border-color:var(--accent)}
+    ul,ol{padding-left:1.25rem}.stamp{font-size:.88rem;color:var(--muted);margin-top:34px}
+  </style>
+</head>
+<body><main>
+  <section class="hero">
+    <div class="kicker">Evidence-aware public case dashboard</div>
+    <h1>HP ProBook 11 G2<br/>hard-freeze investigation</h1>
+    <p class="lede">A newly purchased AU$89 delivered ProBook hard-froze twice almost immediately. The hardware has not been proven faulty; the strongest evidence points instead to firmware/power-state/unsupported-platform interaction on a reused refurb Windows image, amplified by severe 4 GB memory pressure.</p>
+    <div class="actions">
+      <a class="button primary" href="https://github.com/joshualparris/hprobooktroubleshoot">Open GitHub repo</a>
+      <a class="button" href="https://github.com/joshualparris/hprobooktroubleshoot/blob/main/docs/PURCHASE_SELLER_AND_EBAY_REVIEW.md">Read purchase & eBay assessment</a>
+      <a class="button" href="https://github.com/joshualparris/hprobooktroubleshoot/releases/download/windows-crash-doctor-desktop-latest/WindowsCrashDoctor.exe">Windows Crash Doctor EXE</a>
+    </div>
+  </section>
+
+  <section class="grid" aria-label="case summary">
+    <article class="card"><div class="muted">Purchase</div><div class="metric">~AU$89</div><p>Delivered. Received 11 September 2026 with Windows 11 Pro and a 3-month seller warranty.</p></article>
+    <article class="card"><div class="muted">Immediate stability</div><div class="metric bad">2 hard freezes</div><p>Whole-system hangs requiring forced shutdowns within roughly the first day.</p></article>
+    <article class="card"><div class="muted">Basic hardware tests</div><div class="metric good">Passed</div><p>HP memory quick check, SSD SMART and SSD Short DST all passed.</p></article>
+    <article class="card"><div class="muted">Consumer assessment</div><div class="metric warn">~3 / 5</div><p>Excellent price, seemingly sound basic hardware, but poor software/firmware preparation as supplied.</p></article>
+  </section>
+
+  <section class="card">
+    <h2>What is established</h2>
+    <table>
+      <tr><th>Area</th><th>Evidence-backed state</th></tr>
+      <tr><td>Machine</td><td>HP ProBook 11 G2, i3-6100U, Intel HD 520, 4 GB DDR4, Samsung 128 GB SATA SSD.</td></tr>
+      <tr><td>BIOS</td><td>Physical N92 01.04 from 2 November 2016 during the investigation.</td></tr>
+      <tr><td>Firmware device</td><td>Windows recorded HP N92 System Firmware 01.60 in a failed-start / Code 10 state during investigation.</td></tr>
+      <tr><td>Windows image</td><td>Sysprep-respecialised reused/generalised refurb image with substantial retained previous-hardware state.</td></tr>
+      <tr><td>Power correlation</td><td>Current freezes clustered around S4 / hybrid shutdown / Fast Startup-style power transitions.</td></tr>
+      <tr><td>Memory</td><td>4 GB is a proven performance constraint; telemetry showed severe memory pressure.</td></tr>
+      <tr><td>Storage</td><td>No strong current evidence of a straightforward SSD failure.</td></tr>
+      <tr><td>Heat</td><td>Later HWiNFO capture materially weakened overheating as the explanation for the captured period.</td></tr>
+    </table>
+  </section>
+
+  <section class="grid">
+    <article class="card">
+      <h2>Current working model</h2>
+      <blockquote><strong>Firmware / power-state / unsupported-platform interaction on a reused refurb Windows image, with severe 4 GB memory pressure acting as a likely stall amplifier.</strong></blockquote>
+      <p class="muted">This is a ranked problem family, not a confirmed single root cause.</p>
+    </article>
+    <article class="card">
+      <h2>What we are not claiming</h2>
+      <ul>
+        <li>The SSD or RAM is definitely faulty.</li>
+        <li>The motherboard is definitely faulty.</li>
+        <li>The seller knowingly sold a defective machine.</li>
+        <li>The failed firmware state definitely caused the freezes.</li>
+        <li>Windows 11 alone definitely caused the freezes.</li>
+      </ul>
+    </article>
+  </section>
+
+  <section class="card">
+    <h2>Honest eBay review</h2>
+    <blockquote>
+      <p>The laptop was very inexpensive and the basic hardware appears to be in reasonable condition, but unfortunately it wasn't really ready to use as supplied.</p>
+      <p>Within the first day it suffered two complete system freezes requiring a forced shutdown. Hardware diagnostics have since passed the RAM and SSD, so I can't say the hardware itself is faulty.</p>
+      <p>However, further investigation showed the supplied Windows 11 installation appears to have been a reused/generalised refurb image containing drivers and hardware history from other HP computers. The laptop was also running a very old 2016 BIOS and had a failed HP firmware device showing in Windows. Windows 11 is installed despite this 6th-gen Intel model not being officially supported.</p>
+      <p>For the price it may still turn out to be good value, and the listing did include a 3-month warranty, but I expected a refurbished computer to arrive with a clean, stable installation rather than require substantial troubleshooting immediately.</p>
+      <p><strong>Overall: good price and seemingly sound basic hardware, but the software/firmware preparation before sale could have been considerably better.</strong></p>
+    </blockquote>
+  </section>
+
+  <section class="grid">
+    <article class="card">
+      <h2>Next diagnostic sequence</h2>
+      <ol>
+        <li>Preserve evidence and continue the no-Fast-Startup stability window.</li>
+        <li>Make crash-dump capture trustworthy.</li>
+        <li>Inspect XTU/OEM state without stacking changes.</li>
+        <li>Update BIOS safely through HP's official N92 route.</li>
+        <li>Run stronger memory testing if instability persists.</li>
+        <li>Isolate the supplied Windows image with a clean/live OS.</li>
+        <li>Use the 3-month warranty if low-level freezes survive isolation.</li>
+      </ol>
+    </article>
+    <article class="card">
+      <h2>Case documents</h2>
+      <ul>
+        <li><a href="https://github.com/joshualparris/hprobooktroubleshoot/blob/main/analysis/STATUS.md">Current case status</a></li>
+        <li><a href="https://github.com/joshualparris/hprobooktroubleshoot/blob/main/analysis/MASTER_ANALYSIS.md">Master technical analysis</a></li>
+        <li><a href="https://github.com/joshualparris/hprobooktroubleshoot/blob/main/analysis/TEST_PLAN.md">Controlled test plan</a></li>
+        <li><a href="https://github.com/joshualparris/hprobooktroubleshoot/blob/main/conversation/CONSOLIDATED_CASE_HISTORY_2026-09-15.md">Consolidated cross-chat history</a></li>
+        <li><a href="https://github.com/joshualparris/hprobooktroubleshoot/blob/main/SECURITY_NOTICE.md">Security & privacy boundary</a></li>
+      </ul>
+    </article>
+  </section>
+
+  <p class="stamp">Public-safe dashboard updated 15 September 2026. Secrets, BitLocker recovery passwords and unreviewed identifying logs are intentionally excluded.</p>
+</main></body></html>
